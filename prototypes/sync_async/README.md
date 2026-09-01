@@ -1,0 +1,30 @@
+# Sync/async architecture prototypes (roadmap 0.2)
+
+Throwaway prototypes backing
+[`docs/design/SYNC_ASYNC_ARCHITECTURE.md`](../../docs/design/SYNC_ASYNC_ARCHITECTURE.md).
+They exist so the comparison rests on measurements rather than on opinion, and
+so the numbers can be re-derived after the design changes. **None of this is
+library code** — 1.3 implements the recommendation properly.
+
+    python -m pytest prototypes/sync_async/ -q     # 78 passed, 1 xfailed
+    python prototypes/sync_async/measure.py        # every number and output block
+    python prototypes/sync_async/check_ast.py      # exit 0 on the real modules
+
+The xfail is caldav's silent-discard bug, applied as a **strict** marker: it
+asserts that the server was not written to, and it will fail the suite if the bug
+ever stops reproducing.
+
+| File | |
+|---|---|
+| `common.py` | toy backend, sync/async/filesystem transports, fake server |
+| `p1_dual_mode.py` | runtime dual-mode (caldav 3.x) — the control |
+| `p2_sansio.py` | generator-based Sans-I/O |
+| `p2_sansio_bug.py` | the caldav mistake, planted — the specimen both enforcement mechanisms run against |
+| `p2_typed.py` | the same core plus typed façades — the recommendation |
+| `p3_greenlet.py` | greenlet bridging (SQLAlchemy pattern) |
+| `test_conformance.py` | one suite, 4 prototypes × 2 modes |
+| `typing_probe/` | three cases put to mypy per prototype |
+| `measure.py` | lines of code, scaling, traceback quality |
+| `check_ast.py` | the CI enforcement check roadmap 1.3 asks for |
+
+`pytest-asyncio` and `mypy` are needed to run the suite and the probes.
