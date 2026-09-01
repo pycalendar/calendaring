@@ -266,6 +266,11 @@ and it is what makes each later backend cheap to add.
 - **Estimated effort:** 8 hours
 - **Dependencies:** 1.1
 
+Note: `plann` delegates credential storage to this library — its roadmap item 1.3
+is deliberately the command-line half only.  See
+[plann issue #49](https://github.com/pycalendar/plann/issues/49).  This item
+therefore has a committed downstream consumer and should not be trimmed.
+
 **Tasks:**
 - [ ] Config file format and schema, supporting multiple accounts and backends
 - [ ] Config file discovery (XDG paths, explicit path, environment)
@@ -692,7 +697,7 @@ Everything below is in the README's ambition but **outside the 216 funded hours*
 - [icalendar-searcher](https://pypi.org/project/icalendar-searcher/) — same author
 - `calendaring-jmap` — same author, separately NLnet-funded; provides the JMAP
   protocol layer that 2.4 wraps
-- [plann](https://github.com/tobixen/plann) — same author, target consumer
+- [plann](https://github.com/pycalendar/plann) — same author, target consumer
 - [icalcli](https://github.com/jrvarma/icalcli) — prior art for pluggable backends
 
 ### Internal design documents
