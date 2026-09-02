@@ -38,8 +38,9 @@ Today one may have to choose different libraries for fetching calendaring inform
 * Many mail systems comes bundled with calendar systems, and can interoperate with other systems by sending iCal data as email attachments.  The library should support sending iCal data as email attachments.  Perhaps even support accessing mailboxes through JMAP and/or IMAP.
 * I've been playing a bit with Mobilizon lately.  It's basically a federated server designed for spreading calendar event information.  It's quite high on my list to support bidirectional support for this software.
 * There are lots of proprietary systems offering calendaring and/or task management, but without supporting standards very well.  I'm not keen on working with those systems, but I'd happily accept pull-request for supporting any of them.
-* TODO: Research on Gitea, Vikunja, Kanboard, EteSync, Taskwarrior, Focalboard, OpenProject, GitLab, Emacs org-mode, Request Tracker and Simple Markdown files.  Some of those are neither calendaring system nor task list managers, but still frequently used for storing tasks/issues.
+* TODO: Research on Gitea, Vikunja, Kanboard, EteSync, Taskwarrior, OpenProject, GitLab, Emacs org-mode, Request Tracker and Simple Markdown files.  Some of those are neither calendaring system nor task list managers, but still frequently used for storing tasks/issues.
   * OpenProject looks a bit like some commercial solutions backed by heavy marketing investments slightly abusing the "open" keyword, abusing the .org domain space, and possibly just wanting to make quick money out of the EU digital sovereignity awakening,  but I may be very wrong - more research is certainly needed.
+  * Focalboard was dropped from this list: its repository states that it is not maintained, and a Focalboard board has no fixed task schema at all - status, priority, dates and estimates are whatever properties the board author happened to create - so there would be no stable convention for a backend to map onto.
 
 
 TODO: more research to be done.
