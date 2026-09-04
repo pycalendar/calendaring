@@ -13,7 +13,9 @@ fund established by [NLnet](https://nlnet.nl/) with financial support from the
 European Commission's [Next Generation Internet](https://ngi.eu/) programme, under
 the aegis of DG Communications Networks, Content and Technology.
 
-The funded scope is 216 hours.  This was based on some initial human-made estimates on what it would take to create a working first version of the library.  This document is partly a result of an AI-based review of the original plan.  The subtasks have been slightly redefined and reorganized.  Deliverables have been defined.  The plan has been optimized to squeeze the highest-priority tasks into the funded 216 hours.
+The funded scope is 248 hours.  This was based on some initial human-made estimates on what it would take to create a working first version of the library.  This document is partly a result of an AI-based review of the original plan.  The subtasks have been slightly redefined and reorganized.  Deliverables have been defined.  The plan has been optimized to squeeze the highest-priority tasks into the funded hours.
+
+An earlier draft of this document said 216 hours and listed 20 items.  The signed MoU carries 22, and the two extra ones are 1.6 (time-tracking model and API, 12 h, moved here from the `plann` grant) and 4.5 (documentation review and improvements, 20 h, carried out by a contributor from the `icalendar` project).  216 + 12 + 20 = 248.
 
 ---
 
@@ -28,6 +30,7 @@ local `.ics` files, read-only iCalendar feeds, and task/issue trackers.
 1. **Tasks should be first-class, not an afterthought.** iCalendar's `VTODO` is a weak
    task model — there is no agreed way to express a time estimate or time spent.
    The data model must be designed with real task trackers in view, not retrofitted.
+   0.1 surveys that gap; 1.6 fills it.
 2. **One API, honestly documented.** Backends differ enormously in capability. The
    library must not pretend otherwise. A published capability matrix (4.3) is a
    deliverable, not documentation garnish.
@@ -170,7 +173,7 @@ prototyping.
         hypothetical caldav v4. A multi-backend abstraction is by definition not
         CalDAV-protocol logic.
       - *JMAP lives in `calendaring-jmap`*, a separate package, separately funded by
-        NLnet and under way. It is **not** part of this project's 216 hours. The
+        NLnet and under way. It is **not** part of this project's 248 hours. The
         `caldav/jmap/` module currently inside the caldav library is by the same
         principle misplaced; migrating it is caldav's and `calendaring-jmap`'s
         business, not this roadmap's.
@@ -186,7 +189,7 @@ prototyping.
 
 ---
 
-## Phase 1: Framework (56 hours)
+## Phase 1: Framework (68 hours)
 
 ### 1.1 Unified API design and peer review
 
@@ -297,6 +300,52 @@ Modest, because the author has an established pattern to copy from
 - [ ] CI matrix across supported Python versions
 - [ ] PyPI publishing workflow
 - [ ] LICENSE, SECURITY.md, CHANGELOG
+
+---
+
+### 1.6 Time-tracking model and API
+
+- **Priority:** High
+- **Estimated effort:** 12 hours
+- **Dependencies:** 0.1, 1.1
+- **Deliverable:** a time-tracking data model and the public API over it
+- **Downstream consumer:** `plann` Phase 4 (18 h), which is budgeted on the
+  assumption that this exists
+
+**This is not 0.1.**  0.1 is the survey: it asks how eleven real systems represent a
+time estimate and time spent, whether RFC 9253 or `ESTIMATED-DURATION` closes the
+gap, and which `X-` properties are already used in the wild by Taskwarrior, org-mode
+and plann.  It produces a recommendation.  This item builds the thing 0.1
+recommends, and puts an API on it.  The split is the same one as 0.1 → 2.5: research
+in Phase 0, implementation in the phase that owns the code.
+
+It is a separate item rather than part of 1.1 because it has a committed downstream
+consumer with its own funded hours.  `plann`'s roadmap item 4.1 specifies
+`complete --spent/--log/--start/--end` "writing through the library's time-tracking
+API", and 4.2's `sum_hours` aggregates what this model stores.  Those 18 hours are
+funded in the `plann` grant on the assumption that this API exists; these 12 hours
+were moved out of that grant for the same reason (see the note in the MoU).  It
+therefore must not be trimmed, and it must land before `plann` reaches its Phase 4.
+
+**Tasks:**
+- [ ] Implement the model 0.1 recommends: estimate, spent, and the relationship
+      between them
+- [ ] Decide and document the iCalendar representation, including whether an `X-`
+      property is used and under whose namespace — iCalendar has no standard answer,
+      and whatever is chosen here is what other tools will have to read
+- [ ] Time spent is an append-only log with the total derived — settled by 0.1
+      ([Finding 7](TASK_MODEL_SURVEY.md)). What remains is what round-trips
+      through a backend that stores only the total
+- [ ] The API: start, stop, log a duration after the fact, amend, and read back
+- [ ] Map it onto each backend's native notion where one exists (task trackers
+      generally have one; CalDAV does not), and declare the capability honestly
+      where it does not
+- [ ] Extend the conformance suite (1.2) to cover it, including the lossy cases
+- [ ] Aggregation primitives sufficient for `plann`'s `sum_hours` — grouping a
+      selection into budget lines with per-line subtotals, keeping committed and
+      spent time separate
+- [ ] Coordinate the design with `plann` before freezing it; a review from its
+      author is cheap now and expensive after 1.0
 
 ---
 
@@ -469,7 +518,7 @@ multi-backend support as something it wants.
 
 ---
 
-## Phase 4: Documentation (30 hours)
+## Phase 4: Documentation (50 hours)
 
 ### 4.1 Documentation structure and API reference
 
@@ -542,6 +591,30 @@ supports, what it emulates client-side, and what it cannot do at all.
 
 ---
 
+### 4.5 Documentation review and improvements
+
+- **Priority:** Medium
+- **Estimated effort:** 20 hours
+- **Dependencies:** 4.1, 4.2, 4.3
+- **Carried out by:** a contributor from the `icalendar` project (@stevepiercy), not
+  the maintainer
+
+Distinct from 4.4.  4.4 is *peer review*: recruiting outside readers, collecting what
+confused them, and revising.  This item is *editorial work on the text itself* by a
+technical writer who is doing the same job across the whole pycalendar ecosystem, so
+the ecosystem's documentation reads as one body of work rather than five.  These
+hours are budgeted separately in the MoU and are mostly not the maintainer's time;
+they cannot be moved into Phases 0-3.
+
+**Tasks:**
+- [ ] Editorial pass over the structure, the tutorial and the capability matrix
+- [ ] Consistency with the sibling projects' documentation: terminology, headings,
+      code-sample conventions, cross-references
+- [ ] Corrections and improvements arising from that pass, filed and applied
+- [ ] Ensure the published site is navigable from the sibling projects and vice versa
+
+---
+
 ## Release plan
 
 | Release | Contents | After |
@@ -549,7 +622,7 @@ supports, what it emulates client-side, and what it cannot do at all.
 | 0.1.0 | CalDAV backend behind the unified API, config file, sync + async | 1.5, 2.1 |
 | 0.2.0 | Local files and iCalendar feeds | 2.2, 2.3 |
 | 0.3.0 | JMAP | 2.4 |
-| 0.4.0 | First task backend, capability matrix | 2.5, 4.3 |
+| 0.4.0 | First task backend, time tracking, capability matrix | 1.6, 2.5, 4.3 |
 | 1.0.0 | Conformance across all backends, full documentation, API declared stable | Phases 3 and 4 |
 
 The README describes 0.1.0 as "not much more than a wrapper for the CalDAV
@@ -570,6 +643,7 @@ the remaining releases depend on, and is where the funded effort concentrates.
 | 1 | 1.3 Sync/async scaffolding | 10 |
 | 1 | 1.4 Configuration and credentials | 8 |
 | 1 | 1.5 Packaging, CI and release infrastructure | 4 |
+| 1 | 1.6 Time-tracking model and API | 12 |
 | 2 | 2.1 CalDAV backend | 16 |
 | 2 | 2.2 Local iCalendar file backend | 14 |
 | 2 | 2.3 iCalendar feed backend | 6 |
@@ -582,15 +656,16 @@ the remaining releases depend on, and is where the funded effort concentrates.
 | 4 | 4.2 Tutorial | 8 |
 | 4 | 4.3 Backend capability matrix | 6 |
 | 4 | 4.4 Documentation peer review and revision | 6 |
-| | **Total** | **216** |
+| 4 | 4.5 Documentation review and improvements | 20 |
+| | **Total** | **248** |
 
 | Phase | Hours | Share |
 |---|---|---|
-| 0 — Research and design | 44 | 20% |
-| 1 — Framework | 56 | 26% |
-| 2 — Backends | 62 | 29% |
-| 3 — Verification | 24 | 11% |
-| 4 — Documentation | 30 | 14% |
+| 0 — Research and design | 44 | 18% |
+| 1 — Framework | 68 | 27% |
+| 2 — Backends | 62 | 25% |
+| 3 — Verification | 24 | 10% |
+| 4 — Documentation | 50 | 20% |
 
 ---
 
@@ -611,7 +686,7 @@ asserted, tested fact rather than a skipped test.
 ### The task model does not survive contact with a real tracker
 
 **Mitigation:** 0.1 runs before the API is designed, and 2.5 implements a real
-tracker before 1.0. If the model fails, it fails at hour ~120, not hour ~210.
+tracker before 1.0. If the model fails, it fails at hour ~175, not hour ~245.
 
 ### The sync/async decision is wrong
 
@@ -656,7 +731,8 @@ big monolithic monster-package.
 
 ### Peer review is a dependency on other people
 
-Two items (1.1, 4.4) require external reviewers.
+Two items (1.1, 4.4) require external reviewers, and a third (4.5) is carried
+out entirely by a named outside contributor.
 
 **Mitigation:** approach reviewers during Phase 0, not when the work is ready.
 
@@ -664,7 +740,7 @@ Two items (1.1, 4.4) require external reviewers.
 
 ## Beyond the funded scope
 
-Everything below is in the README's ambition but **outside the 216 funded hours**.  The maintainer has a vision to continue maintenance and development of the project with or without funding, though the first priorities will always be to get food on the table.
+Everything below is in the README's ambition but **outside the 248 funded hours**.  The maintainer has a vision to continue maintenance and development of the project with or without funding, though the first priorities will always be to get food on the table.
 
 | Item | Rough estimate | Notes |
 |---|---|---|
