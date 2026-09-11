@@ -1,0 +1,18 @@
+This is a human-written (as opposed to the AI-written `TASK_MODEL_SURVEY.md`-file) subjective document on the problem of interpreting timestamps in the icalendar standard.  It will probably not survive as independent documentation.  Probably the bits that makes sense here should be merged into the other file.
+
+The iCalendar standard does not define DTSTART, DUE and DURATION for a task very well, and that has been bothering me quite a lot.  The only thing that seems to be beyond doubt is the intention that for tasks with a DTSTART set, setting DURATION is an alternative to setting DUE.  Meaning we can have an implicit DUE = DTSTART + DURATION, or an implicit DURATION = DUE - DTSTART.
+
+| DTSTART | DUE | DURATION | PROBLEMS |
+|---------|-----|----------|----------|
+| The earliest time it makes sense to start on a task | The deadline | The "window" when one should consider working on the task | DTSTART may not be very well defined, DTSTART may need to be moved to an earlier time depending on how many other tasks one has on hand |
+| The time one plans to start on the task | The deadline | The time between the planned start and the actual deadline.  It's not necessarily the time available for doing the task, as there may be other events, tasks, as well as things outside the calendar (e.g. bedtime) |  DURATION doesn't give much meaning |
+| The time one actually started working on the task | The deadline | The time between the actual start and the deadline.  May be negative, when working on overdue tasks | Actual start may break recurring tasks |
+| The last possible time one can start working on the task | The deadline | Time estimate including slack + time estimate for other competing tasks that also have to be done in the same period.  Not a very meaningful measurement. | DURATION doesn't give much meaning, and DTSTART ends up being a calculated value, which is even dependent on other tasks/events on the calendar. |
+| The last possible time one can start working on the task, if this was the only thing on the calendar | The deadline | The time estimate for the task | DTSTART is destroyed, it's not a very meaningful measurement |
+| The start of a time slot on the calendar intended for working on this task | The end of the time slot in which one intends to work on this task | Time estimate | The information about the deadline is lost, and one would quite often need to adjust the timestamps when the time ends up being spent on "more important things". |
+
+The DUE can "only" be two things - it can be the deadline (which may be a hard or a soft deadline, or simply wishful thinking), or it can be the end time of a time slot in which one is considering doing the task.  With the latter definition, DTSTART is also pretty well defined - it cannot be anything else than the time one plans to start on the task.
+
+The RFC defines DUE as "the date and time that a to-do is expected to be completed".  I read that as an indicator of the latter, Claude reads it as the deadline.  In the [`TASK_MODEL_SURVEY.md`](TASK_MODEL_SURVEY.md) it's defined as the deadline.  In my design notes in `plann` it's also defined as the deadline, and a VEVENT (linked up through the RELATED-TO property) should be used for "pinning" the task to the calendar.
+
+draft-ietf-calext-ical-tasks-17 brings some clarity - it points towards the first line.  To use DTSTART as "the earliest time it makes sense to start thinking about this task" was also my initial idea when designing plann.  The need for storing the time estimate somewhere won through - but the draft does contain an ESTIMATED-DURATION for this purpose.
