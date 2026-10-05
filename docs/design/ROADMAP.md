@@ -334,8 +334,8 @@ therefore must not be trimmed, and it must land before `plann` reaches its Phase
       property is used and under whose namespace — iCalendar has no standard answer,
       and whatever is chosen here is what other tools will have to read
 - [ ] Time spent is an append-only log with the total derived — settled by 0.1
-      ([Finding 7](TASK_MODEL_SURVEY.md)). What remains is what round-trips
-      through a backend that stores only the total
+      ([survey 3.2](TASK_MODEL_SURVEY.md#32-dimension-by-dimension)). What
+      remains is what round-trips through a backend that stores only the total
 - [ ] The API: start, stop, log a duration after the fact, amend, and read back
 - [ ] Map it onto each backend's native notion where one exists (task trackers
       generally have one; CalDAV does not), and declare the capability honestly
