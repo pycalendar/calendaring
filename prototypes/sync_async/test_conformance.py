@@ -12,6 +12,7 @@ Run:  python -m pytest prototypes/sync_async/ -q
 from __future__ import annotations
 
 import inspect
+import warnings
 from pathlib import Path
 from typing import Any
 
@@ -226,7 +227,7 @@ async def test_facade_misuse_is_caught_in_both_modes(
     """The same guard, reached through a typed facade rather than public().
 
     Review finding 1: the facades bypass ``public()``, so this is the test that
-    would have caught the recommended design having no guard at all.  The slip
+    would have caught p2b having no guard at all.  The slip
     is planted in the shared core body and reached through the public facade
     method, as a caller would.  What catches it is the ``guard()`` in the
     facade the body wrongly calls (``save``).  In async mode that guard is the
@@ -276,7 +277,44 @@ def test_static_check_passes_the_real_modules_and_catches_the_specimen() -> None
     here = Path(__file__).parent
     assert check_ast.check(here / "p2_sansio.py") == []
     assert check_ast.check(here / "p2_typed.py") == []
-    assert check_ast.check(here / "p2_sansio_bug.py") != []
+    flagged = {line for line, _ in check_ast.check(here / "p2_sansio_bug.py")}
+    src = (here / "p2_sansio_bug.py").read_text().splitlines()
+    planted = {n for n, text in enumerate(src, 1) if "# BUG" in text}
+    assert len(planted) == 2
+    assert flagged == planted
+
+
+@pytest.mark.asyncio
+async def test_dropped_io_body_is_silent_at_runtime(
+    mode: str, store: Store, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The other shape, in p2b: ``self._io_save()`` without ``yield from``.
+
+    Planted in p2b's shared core body and reached through the public facade,
+    as ``test_facade_misuse_is_caught_in_both_modes`` does for the public-name
+    shape.  The guard never runs, because no public name is called; the
+    generator is built and dropped, and Python does not warn about a generator
+    that was never started.  The write is lost in both modes with no exception
+    and no warning, so only a static check can catch this shape.  The test
+    pins that hole; ``p2_sansio_bug._io_reopen`` is the same shape for
+    ``check_ast.py``.
+    """
+    store.tasks["task-1"]["status"] = "COMPLETED"
+    coll = make_collection("p2_typed", mode, store)
+    task = await maybe_await(coll.get_task("task-1"))
+
+    def _io_uncomplete(self: Any) -> Any:
+        self.status = "NEEDS-ACTION"
+        self._io_save()  # the dropped generator, inside a shared core body
+        return self
+        yield
+
+    monkeypatch.setattr(p2_typed._TaskCore, "_io_uncomplete", _io_uncomplete)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        result = await maybe_await(task.uncomplete())
+    assert result.status == "NEEDS-ACTION"
+    assert store.tasks["task-1"]["status"] == "COMPLETED"
 
 
 @pytest.mark.asyncio

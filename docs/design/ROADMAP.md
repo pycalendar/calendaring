@@ -137,7 +137,8 @@ fifteen-year-old codebase is precisely the open question.
       not `client.execute(event.build_save_request())`
 - [x] Check how the chosen approach survives an HTTP-paginated backend (issue
       trackers) and a filesystem backend, not only a single-request-per-call one
-- [x] Publish the comparison and the recommendation
+- [x] Publish the comparison
+- [ ] The author's decision, recorded in the comparison's last section
 
 **Explicitly rejected without further study:** wrapping async in `asyncio.run()` for
 the sync path. Nested event loops are forbidden and it cannot be called from an
@@ -149,10 +150,11 @@ give a single source of truth with no build step, and generator-based Sans-I/O i
 the one that matches the instinct behind this item. The research must still be
 allowed to reach a different conclusion.
 
-It did. The author still finds "write async, generate sync" unattractive, but
-fighting a Sans-I/O design for methods that make several round trips is less
-attractive still, and the prototypes favoured codegen; see
-[the comparison](SYNC_ASYNC_ARCHITECTURE.md#10-recommendation).
+It was given the chance: codegen (`unasync`) was prototyped too. Two candidates
+hold up — generator-based Sans-I/O with typed façades (p2b) and async-first
+source with a generated sync copy (p4) — and the prototypes do not settle which
+serves the project better. The comparison sets out the trade without
+recommending one; see [§10 of the comparison](SYNC_ASYNC_ARCHITECTURE.md#10-p2b-and-p4-compared).
 
 **Note:** We should in general be careful relying too much on the
 AI-generated code and documentation, but GenAI is great for rapid
@@ -259,22 +261,31 @@ and it is what makes each later backend cheap to add.
 
 **Tasks:**
 - [x] Before implementing: a clean-context review of 0.2's `unasync` prototype
-      (p4) and the claims the recommendation rests on
-- [ ] Implement 0.2's recommendation as reusable scaffolding: a recursive
-      generator that deletes orphans, and a freshness test that compares file
-      sets as well as contents
-- [ ] Gate CI on pyright, or mypy with `check_untyped_defs`, over both copies,
-      plus ruff F841; test that the checker flags a committed specimen; make
-      dev-only tools fail the build when missing in CI rather than skip
-- [ ] Check that `_async/` contains nothing a token rewrite breaks (`asyncio`,
-      third-party `Async*` names, `await(...)`); per-mode code goes in a
-      hand-written layer
+      (p4) and the claims made for it
+- [ ] Implement the design chosen in 0.2 as reusable scaffolding, with per-mode
+      code in a hand-written layer underneath. Depending on the choice:
+  - **p2b:** the generator core, the sync and async drivers, the guard and the
+    façade pattern. Try typing the shared core (`IO[T]`, typed back
+    references) rather than `IO[Any]`, and try generating the façades. Build
+    the static composition check properly from `check_ast.py` — match on
+    `self` and known receivers, resolve names across modules, do not exempt an
+    assigned public call — and gate CI on it: the runtime guard is blind to a
+    missing `yield from`, so this check is its main protection (pyright's
+    noisy `reportUnusedCallResult` is the other). Keep the completeness test
+    and the guard tests.
+  - **p4:** a recursive generator that deletes orphans, and a freshness test
+    that compares file sets as well as contents. Gate CI on pyright, or mypy
+    with `check_untyped_defs`, over both copies, plus ruff F841, with a test
+    that the checker flags a committed specimen, and run the conformance suite
+    under `-W error`. Check that `_async/` contains nothing a token rewrite
+    breaks (`asyncio`, third-party `Async*` names, `await(...)`).
+- [ ] Make dev-only tools fail the build when missing in CI rather than skip
 - [ ] Ensure the public type signatures are correct under mypy in **both** modes —
-      the caldav failure was annotations that lie
-- [ ] Add whatever enforcement the chosen approach permits: a CI AST check, a
-      metaclass hook, or a test that asserts every I/O method behaves correctly in
-      both modes. Enforcement is not optional; it is the whole point of the item.
+      the caldav failure was annotations that lie — and gate CI on a test that
+      the checker catches a missing and a spurious `await` (0.2's three cases)
 - [ ] Document the pattern for contributors adding a backend
+
+Enforcement is not optional; it is the whole point of the item.
 
 ---
 

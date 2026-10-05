@@ -6,8 +6,12 @@ against a transcript pasted into a document:
     python -m pytest test_conformance.py -k misuse   # the runtime guard
     python check_ast.py p2_sansio_bug.py             # the static check
 
-It contains the exact caldav mistake - a composite I/O body calling the
-*public* method instead of entering the other body with ``yield from``.
+It contains both shapes of the mistake.  ``_io_uncomplete`` is the exact
+caldav one - a composite I/O body calling the *public* method instead of
+entering the other body with ``yield from``; the runtime guard raises.
+``_io_reopen`` calls the private body but forgets ``yield from``; the
+generator is dropped unstarted, nothing raises or warns, and only the static
+check finds it.
 """
 
 from __future__ import annotations
@@ -35,3 +39,11 @@ class BuggyTask(Task):
         yield  # pragma: no cover - makes this a generator
 
     uncomplete = public(_io_uncomplete)
+
+    def _io_reopen(self) -> IO["BuggyTask"]:
+        self.status = "NEEDS-ACTION"
+        self._io_save()  # BUG: should be `yield from self._io_save()`
+        return self
+        yield  # pragma: no cover - makes this a generator
+
+    reopen = public(_io_reopen)
