@@ -101,7 +101,7 @@ in any one of them.
 The caldav library reached its dual-mode design by accretion, and
 [`ASYNC_DESIGN_CRITIQUE.md`](https://github.com/python-caldav/caldav/blob/master/docs/design/ASYNC_DESIGN_CRITIQUE.md)
 documents the resulting failure modes: a forgotten `is_async_client` check silently
-discards a coroutine with no error and no warning, the return type annotations lie,
+discards a coroutine with only an easily missed `RuntimeWarning`, the return type annotations lie,
 and every new I/O method is a latent bug requiring three separate guards to be
 correct. That history is the *reason* this item exists — a greenfield library with
 no backward-compatibility obligation and no sunken cost in existing tests gets one

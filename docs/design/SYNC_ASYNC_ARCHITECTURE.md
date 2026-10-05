@@ -55,7 +55,7 @@ Shape 4 is the important one. It is the exact shape of the caldav bug.
 
 caldav's [`ASYNC_DESIGN_CRITIQUE.md`](https://github.com/python-caldav/caldav/blob/master/docs/design/ASYNC_DESIGN_CRITIQUE.md)
 records that a composite method which forgets its `is_async_client` check
-discards a coroutine and silently does nothing. `p1_dual_mode.uncomplete()`
+discards a coroutine and does nothing. `p1_dual_mode.uncomplete()`
 reproduces it verbatim, and `measure.py` prints it:
 
 ```
@@ -67,24 +67,10 @@ THE DUAL-MODE BUG  (p1, async: the object looks right, the server is stale)
 The method returns an object of the right type, with the right attribute values,
 and the server was never written to.
 
-**One correction to that document.** It says there is "no error and no warning".
-There is in fact a warning — Python emits
-`RuntimeWarning: coroutine 'BoundTask._async_save' was never awaited`. But it is
-weak in four specific ways, shown as far as CPython allows in
-[`p1_dual_mode.py`](../../prototypes/sync_async/p1_dual_mode.py):
-
-1. it is only a warning, printed once per location, and on interpreters without
-   reference counting it fires at garbage-collection time, far from the call
-   site. On CPython it fires at once and names the offending line —
-   `measure.py` shows `p1_dual_mode.py:124 … self.save()  # BUG` — which is the
-   best case, and still only a warning;
-2. it names a *private* method (`_async_save`), not the public method the caller
-   used, although CPython's source line does show the public call;
-3. `python -W ignore` and any `logging` config that swallows warnings hide it
-   outright, and a test runner demotes it: pytest *does* print it — this suite's
-   own run shows it every time — but in a non-failing warnings summary that a
-   green run invites you to scroll past; and
-4. it does not stop execution, so the program proceeds on false data.
+The critique also explains why the `RuntimeWarning: coroutine … was never
+awaited` that Python does emit is too weak to count;
+[`p1_dual_mode.py`](../../prototypes/sync_async/p1_dual_mode.py) reproduces it
+(`measure.py` shows `p1_dual_mode.py:124 … self.save()  # BUG`).
 
 So the failure is *not literally silent*, but it is silent enough that every
 instance in caldav was found by writing a test for it rather than by observing
