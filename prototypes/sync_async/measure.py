@@ -8,6 +8,7 @@ from __future__ import annotations
 import ast
 import asyncio
 import io
+import os
 import sys
 import traceback
 from pathlib import Path
@@ -19,6 +20,8 @@ import common  # noqa: E402
 import p1_dual_mode  # noqa: E402
 import p2_sansio  # noqa: E402
 import p3_greenlet  # noqa: E402
+from p4_codegen._async import tasks as p4_async  # noqa: E402
+from p4_codegen._sync import tasks as p4_sync  # noqa: E402
 from common import AsyncTransport, Store, SyncTransport  # noqa: E402
 
 HERE = Path(__file__).parent
@@ -50,6 +53,8 @@ def make(proto: str, mode: str, store: Store) -> Any:
         return p1_dual_mode.Collection(transport, is_async=(mode == "async"))
     if proto == "p2_sansio":
         return p2_sansio.Collection(transport)
+    if proto == "p4_codegen":
+        return p4_async.AsyncCollection(transport) if mode == "async" else p4_sync.SyncCollection(transport)
     return p3_greenlet.Collection(transport)
 
 
@@ -156,7 +161,7 @@ def scaling_table() -> None:
         per = (total - fixed) / ops
         rows.append((label, total, fixed, per, ops))
         print(f"  {label:24} total={total:4}  fixed={fixed:3}  ops={ops}  per method={per:5.1f}")
-    # p2b, the recommendation: p2_typed.py re-implements the core and imports
+    # p2b, the typed-facade variant: p2_typed.py re-implements the core and imports
     # only the drivers and guard from p2_sansio, so its fixed cost is those
     # (not p2_sansio's ``public``) plus p2_typed's own module-level setup, and
     # its per-method cost is one core body plus two facade methods.
@@ -170,6 +175,18 @@ def scaling_table() -> None:
     label = "p2b Sans-I/O + typed"
     rows.append((label, total, fixed, per, ops))
     print(f"  {label:24} total={total:4}  fixed={fixed:3}  ops={ops}  per method={per:5.1f}")
+    # p4: only _async/ is written by hand.  Its fixed cost is the generator
+    # script (build tooling, not shipped); _sync/ is shipped but not written.
+    src = HERE / "p4_codegen" / "_async" / "tasks.py"
+    fixed = code_lines(HERE / "p4_codegen" / "generate.py")
+    ops = count_ops(src)
+    per = code_lines(src) / ops
+    total = int(fixed + ops * per)
+    label = "p4 unasync, written"
+    rows.append((label, total, fixed, per, ops))
+    print(f"  {label:24} total={total:4}  fixed={fixed:3}  ops={ops}  per method={per:5.1f}")
+    shipped = code_lines(src) + code_lines(HERE / "p4_codegen" / "_sync" / "tasks.py")
+    print(f"  {'':24} shipped, both copies: {shipped} lines")
     print()
     print("  Extrapolated to caldav's 57 dual-mode methods (fixed + 57 x per):")
     for label, total, fixed, per, ops in rows:
@@ -235,6 +252,21 @@ def demos() -> None:
             print(f"  {line}")
         print(f"  -> exit {out.returncode}")
 
+    print()
+    print("=" * 72)
+    print("THE CODEGEN SLIP  (p4: a missing await, found by an unconfigured type checker)")
+    print("=" * 72)
+    for target in ("p4_codegen/_async/buggy.py", "p4_codegen/_sync/buggy.py", "p1_dual_mode.py"):
+        out = subprocess.run(
+            [sys.executable, "-m", "mypy", "--no-incremental", "--cache-dir=/dev/null", target],
+            capture_output=True, text=True, cwd=HERE, env={**os.environ, "MYPYPATH": str(HERE)},
+        )
+        if "No module named mypy" in out.stderr:
+            print("  mypy not installed - skipped")
+            break
+        lines = [ln for ln in out.stdout.splitlines() if ": error:" in ln and "unused-coroutine" in ln]
+        print(f"  {target:28} " + (lines[0].split(": error: ")[1] if lines else "no unused-coroutine error"))
+
 
 def main() -> None:
     print("=" * 72)
@@ -244,6 +276,8 @@ def main() -> None:
         "p1 runtime dual-mode": ["p1_dual_mode.py"],
         "p2 generator Sans-I/O": ["p2_sansio.py"],
         "p3 greenlet": ["p3_greenlet.py"],
+        "p4 unasync, hand-written": ["p4_codegen/_async/tasks.py"],
+        "p4 unasync, generated": ["p4_codegen/_sync/tasks.py"],
     }
     for label, names in files.items():
         total = sum(code_lines(HERE / n) for n in names)
@@ -266,10 +300,10 @@ def main() -> None:
     print("=" * 72)
     print("TRACEBACK QUALITY  (backend raises on page 2 of a paginated search)")
     print("=" * 72)
-    for proto in ("p1_dual_mode", "p2_sansio", "p3_greenlet"):
+    for proto in ("p1_dual_mode", "p2_sansio", "p3_greenlet", "p4_codegen"):
         for mode in ("sync", "async"):
             n, names, text = capture_traceback(proto, mode)
-            objlayer = "yes" if any("p1_" in f or "p2_" in f or "p3_" in f for f in names) else "NO"
+            objlayer = "yes" if any(f.startswith(("p1_", "p2_", "p3_")) or f == "tasks.py" for f in names) else "NO"
             print(f"  {proto:14} {mode:6} frames={n:2}  object-layer frame visible: {objlayer}")
             print(f"       {' -> '.join(names)}")
     print()

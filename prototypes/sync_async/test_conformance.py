@@ -1,4 +1,4 @@
-"""One conformance suite, driving all four prototypes in both modes.
+"""One conformance suite, driving all five prototypes in both modes.
 
 This file *is* one of the measurements.  The roadmap asks whether a single test
 suite can drive both modes; the answer for every candidate is yes, and this
@@ -23,9 +23,13 @@ import p2_sansio
 import p2_sansio_bug
 import p2_typed
 import p3_greenlet
+from p4_codegen._async import buggy as p4_async_buggy
+from p4_codegen._async import tasks as p4_async
+from p4_codegen._sync import buggy as p4_sync_buggy
+from p4_codegen._sync import tasks as p4_sync
 from common import AsyncFileTransport, AsyncTransport, FileStore, Store, SyncTransport
 
-PROTOCOLS = ["p1_dual_mode", "p2_sansio", "p2_typed", "p3_greenlet"]
+PROTOCOLS = ["p1_dual_mode", "p2_sansio", "p2_typed", "p3_greenlet", "p4_codegen"]
 MODES = ["sync", "async"]
 
 
@@ -48,6 +52,12 @@ def make_collection(proto: str, mode: str, store: Store, transport: Any = None) 
             p2_typed.AsyncCollection(transport)
             if mode == "async"
             else p2_typed.SyncCollection(transport)
+        )
+    if proto == "p4_codegen":
+        return (
+            p4_async.AsyncCollection(transport)
+            if mode == "async"
+            else p4_sync.SyncCollection(transport)
         )
     return p3_greenlet.Collection(transport)
 
@@ -267,3 +277,75 @@ def test_static_check_passes_the_real_modules_and_catches_the_specimen() -> None
     assert check_ast.check(here / "p2_sansio.py") == []
     assert check_ast.check(here / "p2_typed.py") == []
     assert check_ast.check(here / "p2_sansio_bug.py") != []
+
+
+@pytest.mark.asyncio
+async def test_codegen_bug_is_async_only(store: Store) -> None:
+    """p4: the planted missing ``await`` is correct code once unasync'ed.
+
+    The same asymmetry as p1: the sync suite is green, async users lose the
+    write.  Only a type checker or ``-W error`` sees it (section 5).
+    """
+    sync_coll = p4_sync.SyncCollection(SyncTransport(store))
+    task = p4_sync_buggy.SyncBuggyTask.from_dict(store.tasks["task-1"])
+    task._collection = sync_coll
+    task.status = "COMPLETED"
+    task.save()
+    task.uncomplete()
+    assert store.tasks["task-1"]["status"] == "NEEDS-ACTION"  # sync: correct
+
+    async_coll = p4_async.AsyncCollection(AsyncTransport(store))
+    atask = p4_async_buggy.AsyncBuggyTask.from_dict(store.tasks["task-1"])
+    atask._collection = async_coll
+    atask.status = "COMPLETED"
+    await atask.save()
+    with pytest.warns(RuntimeWarning, match="never awaited"):
+        result = await atask.uncomplete()
+        del result
+        import gc
+
+        gc.collect()
+    assert atask.status == "NEEDS-ACTION"  # the object looks right...
+    assert store.tasks["task-1"]["status"] == "COMPLETED"  # ...the server is stale
+
+
+def test_generated_sync_code_is_fresh(tmp_path: Path) -> None:
+    """The committed ``_sync/`` must be exactly what unasync makes of ``_async/``.
+
+    This is what replaces a build step: an edit to the generated copy, or a
+    forgotten regeneration, fails here.
+    """
+    pytest.importorskip("unasync", reason="needs unasync: uv run --with unasync")
+    from p4_codegen import generate
+
+    here = Path(generate.__file__).parent
+    for fresh in generate.generate(tmp_path):
+        committed = here / "_sync" / fresh.name
+        assert committed.read_text() == fresh.read_text(), f"_sync/{fresh.name} is stale"
+
+
+@pytest.mark.parametrize(
+    ("async_src", "naive_sync"),
+    [
+        # a blocking backend pushed to a thread: the sync copy returns a coroutine
+        ("data = await asyncio.to_thread(path.read_text)", "data = asyncio.to_thread(path.read_text)"),
+        # a third-party async class: renamed to a class that does not exist
+        ("client = httpx.AsyncClient()", "client = httpx.SyncClient()"),
+        # concurrency: gather() survives, and is meaningless without a loop
+        ("a, b = await asyncio.gather(f(), g())", "a, b = asyncio.gather(f(), g())"),
+    ],
+)
+def test_unasync_is_a_token_rewrite(async_src: str, naive_sync: str) -> None:
+    """What unasync cannot translate, and so what p4 must keep out of ``_async/``.
+
+    Each of these is a correct async line whose unasync'ed form is wrong.  In
+    p4 they are absent only because the transports are supplied from outside;
+    a real library needs hand-written per-mode shims for them (httpcore keeps
+    a ``_synchronization.py`` and a backend pair for exactly this).
+    """
+    unasync = pytest.importorskip("unasync", reason="needs unasync: uv run --with unasync")
+    import tokenize_rt
+
+    rule = unasync.Rule("/_async/", "/_sync/")
+    out = tokenize_rt.tokens_to_src(rule._unasync_tokens(tokenize_rt.src_to_tokens(async_src)))
+    assert out == naive_sync

@@ -114,11 +114,10 @@ class BoundTask(Task):
     #
     # Not *silently*, quite: Python emits `RuntimeWarning: coroutine
     # 'BoundTask._async_save' was never awaited` - on CPython at once, pointing
-    # at the line below; elsewhere at garbage-collection time.  See section 2 of
-    # SYNC_ASYNC_ARCHITECTURE.md, which corrects caldav's critique on exactly
-    # this point.  But it is only a warning: it names a private method, is
-    # hidden by `-W ignore`, and does not stop execution.  mypy catches the missing await here; it also rejects the
-    # correct sync call (section 6).
+    # at the line below; elsewhere at garbage-collection time.  But it is only
+    # a warning: it names a private method, is hidden by `-W ignore`, and does
+    # not stop execution (caldav's ASYNC_DESIGN_CRITIQUE.md).  mypy does not
+    # flag the line: `Union[Any, Coroutine]` hides the coroutine (section 5).
     def uncomplete(self) -> MaybeAwaitable:
         self.status = "NEEDS-ACTION"
         self.save()  # BUG in async mode: coroutine created and dropped
