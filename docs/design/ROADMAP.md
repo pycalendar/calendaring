@@ -67,25 +67,25 @@ task files.
 For each system, record how it models — and whether it can round-trip:
 
 **Tasks:**
-- [ ] Identity: is there a stable, client-assignable ID, or a server-assigned integer?
-- [ ] Time estimate and time spent — the gap the README names explicitly
-- [ ] Status lifecycle: is it a fixed enum, or user-definable per project/board?
-- [ ] Priority: numeric, ordinal, or a label?
-- [ ] Dates: due, start, scheduled, deferred — and which of them exist at all
-- [ ] Recurrence: supported, faked, or absent
-- [ ] Dependencies and parent/child relations
-- [ ] Assignment, ownership, and multi-user semantics
-- [ ] Labels/tags/categories, and whether they are free-form
-- [ ] Change detection: ETag, revision counter, `updated` timestamp, or nothing
-- [ ] Search and filter capabilities offered server-side
-- [ ] Auth model, pagination, and rate limiting (a real implementation cost)
-- [ ] Check what iCalendar already offers: RFC 9253 relationship support, and
+- [x] Identity: is there a stable, client-assignable ID, or a server-assigned integer?
+- [x] Time estimate and time spent — the gap the README names explicitly
+- [x] Status lifecycle: is it a fixed enum, or user-definable per project/board?
+- [x] Priority: numeric, ordinal, or a label?
+- [x] Dates: due, start, scheduled, deferred — and which of them exist at all
+- [x] Recurrence: supported, faked, or absent
+- [x] Dependencies and parent/child relations
+- [x] Assignment, ownership, and multi-user semantics
+- [x] Labels/tags/categories, and whether they are free-form
+- [x] Change detection: ETag, revision counter, `updated` timestamp, or nothing
+- [x] Search and filter capabilities offered server-side
+- [x] Auth model, pagination, and rate limiting (a real implementation cost)
+- [x] Check what iCalendar already offers: RFC 9253 relationship support, and
       whether its `ESTIMATED-DURATION` (or any registered extension) closes the
       estimate gap, or whether an `X-` extension / native model is needed
-- [ ] Survey the `X-` properties already used in the wild for time tracking
+- [x] Survey the `X-` properties already used in the wild for time tracking
       (Taskwarrior, org-mode exports, plann)
-- [ ] Publish the analysis, with a recommendation for the library's task model
-- [ ] Recommend which single tracker to implement first (feeds 2.5), with reasons
+- [x] Publish the analysis, with a recommendation for the library's task model
+- [x] Recommend which single tracker to implement first (feeds 2.5), with reasons
 
 **Note on scope:** this is research plus a model proposal. Implementing a backend
 is separately budgeted (2.5). Twenty hours across eleven systems is roughly 1.5 h

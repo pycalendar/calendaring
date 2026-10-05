@@ -1,7 +1,7 @@
 # Survey: how real systems model tasks
 
 **Roadmap item:** [0.1 Task and issue-tracker data model](ROADMAP.md#01-task-and-issue-tracker-data-model)
-**Status:** complete in draft — awaiting the author's review and the decisions in [4.4](#44-open-questions-for-the-author)
+**Status:** complete in draft
 **Deliverable:** this analysis, plus a proposed task data model (Part 4) and a
 recommendation for which tracker to implement first (Part 5)
 
@@ -22,11 +22,7 @@ verified from a primary source it is marked **[unverified]** rather than smoothe
 over. This document was drafted with AI assistance; the marking discipline exists
 so that the author can check the claims rather than having to trust them.
 
-**On scope.** This is research plus a model proposal. Implementing a backend is
-separately budgeted ([2.5](ROADMAP.md)), and implementing the time-tracking model
-is budgeted separately again. Twenty hours across eleven systems is roughly 1.5 h
-each plus write-up: enough for an informed survey, not for deep expertise in any
-one of them.
+**On scope.** This is research plus a model proposal. Actual implementation is outside the scope.  Twenty hours across eleven systems is roughly 1.5 h each plus write-up: enough for an informed survey, not for deep expertise in any one of them.
 
 ### Coverage
 
@@ -35,8 +31,8 @@ one of them.
 | 1 | The standards baseline | drafted |
 | 2 | The eleven systems | drafted — all eleven |
 | 3 | Cross-cutting comparison | drafted |
-| 4 | Proposed model | drafted; four decisions left to the author in [4.4](#44-open-questions-for-the-author) |
-| 5 | Which tracker to implement first | drafted — recommends Gitea |
+| 4 | Proposed model | drafted
+| 5 | Which tracker to implement first | Gitea |
 
 ### The dimensions each system is surveyed against
 
@@ -60,10 +56,6 @@ in Part 2, so that the systems can be compared row by row in Part 3.
 
 ## Part 1: The standards baseline
 
-Before asking what eleven trackers do, it is worth being precise about what the
-calendaring standards already offer, because two of the three gaps the README
-names have moved since the README was written.
-
 ### 1.1 RFC 5545 alone
 
 Plain [RFC 5545](https://datatracker.ietf.org/doc/html/rfc5545) `VTODO` gives a
@@ -79,83 +71,24 @@ and [`NEXT_LEVEL.md`](https://github.com/pycalendar/plann/blob/master/NEXT_LEVEL
 and is not repeated here. The short version of its conclusion: of seven things one
 wants to record about a task, RFC 5545 has room for three, so `DURATION` gets
 pressed into service as the time estimate and `DTSTART` is redefined as "the
-latest you can start and still finish by `DUE`".
+latest you can start and still finish by `DUE`, given that this task gets full priority".
 
 **That convention is now in conflict with an emerging standard.** See 1.2.
 
 ### 1.2 The task extensions draft — the estimate gap is closing
 
 [`draft-ietf-calext-ical-tasks-17`](https://datatracker.ietf.org/doc/draft-ietf-calext-ical-tasks/)
-("Task Extensions to iCalendar", Apthorp & Douglass, 10 December 2025) is **past
-working-group last call and sitting at the RFC Editor** — datatracker records it as
-submitted to the IESG and, as of 2026-09-24, "In Final Review" at the RFC Editor. It is intended as a Proposed
-Standard updating RFC 5545. This is not a speculative draft; the library should
-plan for it to become an RFC within the funded period.
+("Task Extensions to iCalendar", Apthorp & Douglass, 10 December 2025) is a Proposed Standard updating RFC 5545. It seems very likely that this will be released as an RFC within monthes.  It's mostly focusing on workflows involving multiple users.  It adds granularity to task statuses, and it introduces a new property `ESTIMATED-DURATION`, which closes the estimate half of the README's gap.
 
-It defines:
+`ESTIMATED-DURATION` is the estimate, and `DTSTART` - `DUE` is the *window* a task may be performed in.  The model in plann is to use `DURATION` as the estimate, and derive `DTSTART` from it.
 
-| Name | Kind | Value | Where | Purpose |
-|---|---|---|---|---|
-| `ESTIMATED-DURATION` | property | DURATION | `VTODO` | the estimated time the task will take |
-| `REASON` | property | URI | `VSTATUS`, `PARTICIPANT` | why a status changed |
-| `SUBSTATE` | property | TEXT | `VSTATUS` | `OK` / `ERROR` / `SUSPENDED` |
-| `TASK-MODE` | property | TEXT | `VTODO` | server-side automation on attendee status change |
-| `VSTATUS` | component | — | `VEVENT`, `VTODO`, `VJOURNAL`, `VFREEBUSY`, `PARTICIPANT` | a status change with reason and timestamp |
-| `PENDING`, `FAILED` | `STATUS` values | — | `VTODO` | accepted-but-not-started; failed |
-| `FAILED` | `PARTSTAT` value | — | `VTODO` `ATTENDEE` | participant failed the task |
-
-**`ESTIMATED-DURATION` closes the estimate half of the README's gap.** The draft is
-explicit about the division of labour, and it is the opposite of plann's
-convention:
-
-> In a "VTODO" calendar component the property MAY be used to specify the
-> estimated duration for the to-do, with or without an explicit time window in
-> which the event should be started and completed. When present, "DTSTART" and
-> "DUE" or "DTSTART" and "DURATION" properties represent the window in which the
-> task can be performed.
-> — [§10.1](https://www.ietf.org/archive/id/draft-ietf-calext-ical-tasks-17.txt)
-
-So the standard's model is: `ESTIMATED-DURATION` is the estimate, and
-`DTSTART`+`DUE` is the *window*. plann's model is: `DURATION` is the estimate, and
-`DTSTART` is derived from it. Both are coherent; they are not the same, and
-`DURATION` means different things in each.
-
-The draft also **drops** RFC 5545's rule that `DURATION` in a `VTODO` requires a
-`DTSTART` ([§11.1](https://www.ietf.org/archive/id/draft-ietf-calext-ical-tasks-17.txt)),
-so a bare `DURATION` with no `DTSTART` becomes legal — which is roughly "an
-estimate with no window", and is a third way to say almost the same thing.
-
-**Finding 1 — the library has a decision to make, and it is not a free one.**
-Three readings of a `VTODO`'s duration fields are now in play: RFC 5545's
-window, the draft's `ESTIMATED-DURATION`, and plann's `DURATION`-as-estimate.
-Data written by plann today will be misread by any client implementing the
-draft, and vice versa. The unified model should carry *estimate* as its own
-field, map it to `ESTIMATED-DURATION` when writing, and read
-`DURATION`-as-estimate only under an explicit compatibility flag. This needs
-the author's decision — see the open questions in Part 4.
+It seems pretty obvious that we should support the tasks draft - time estimates should be embedded in `ESTIMATED-DURATION`, and `DURATION` should be the window for performing the task. This means icalendar task data created through plann has to be rewritten to support the tasks draft.
 
 ### 1.3 The time-spent gap is **not** closing
 
-Neither the tasks draft nor JSCalendar defines anything for time actually spent.
-Searching the full text of both for `spent`, `worked`, `worklog` and `actual
-duration` returns nothing relevant in either
-([draft-17](https://www.ietf.org/archive/id/draft-ietf-calext-ical-tasks-17.txt),
-[RFC 8984](https://www.rfc-editor.org/rfc/rfc8984.txt)).
+Neither the tasks draft nor JSCalendar defines anything for time actually spent.  There are also no de-facto convention to be compatible with.  Every known client that tracks time spent keeps it to itself, it's not exported to iCalendar format or to other systems.  There are no known systems using X-properties for storing this information.
 
-`PERCENT-COMPLETE` exists in both, and it is not a substitute: it says how far
-along the task is, not how many hours went into getting there, and the two are
-independent — a task can be 50% done after one hour or after forty.
-
-**Finding 2 — the README's central complaint survives, but only half of it.**
-"No clear way to add time estimates **and** time spent" was true when written.
-The estimate half is being fixed by the IETF. The time-spent half is not being
-fixed by anyone, in either the iCalendar or the JSCalendar lineage. That is
-the gap this library actually has to invent into, and it is why the
-implementation half is separately budgeted.
-
-**`X-` properties in the wild.** Before inventing anything it is worth knowing
-whether someone already has, so the time-related `X-` properties of the task
-clients that write iCalendar were checked at source level on 2026-09-24:
+A small research on a handful of systems 2026-09-24:
 
 | Client | What it writes for time | Evidence |
 |---|---|---|
@@ -168,11 +101,6 @@ clients that write iCalendar were checked at source level on 2026-09-24:
 
 Thunderbird, Evolution, Apple Reminders and Outlook were not checked.
 
-**Finding 2b — there is no de-facto convention to be compatible with.** Every
-client that tracks time keeps it to itself; none of it reaches iCalendar. That
-leaves Part 4.3 free to choose a representation with no migration burden, and
-also with nothing in the wild to lean on.
-
 The author's three candidate workarounds, from plann's
 [`NEXT_LEVEL.md`](https://github.com/pycalendar/plann/blob/master/NEXT_LEVEL.md),
 with his own assessment:
@@ -181,11 +109,7 @@ with his own assessment:
 2. A new `PARTSTAT` value, `X-ATTENDED` — his current preferred workaround
 3. A new component, `VTIMESPENT`
 
-Part 2 tests these against what the surveyed systems actually store, and Part 4
-returns to the choice. Note that candidate 2 has acquired a complication since it
-was written: the tasks draft adds `PARTSTAT=FAILED` and a whole `VSTATUS`
-component in the same area of the spec, so an `X-ATTENDED` `PARTSTAT` is now
-landing next to standardised neighbours rather than into empty space.
+Note that candidate 2 gets more complicated when considering the tasks draft; it adds `PARTSTAT=FAILED` and a whole `VSTATUS` component in the same area of the spec.
 
 ### 1.4 RFC 9253 — relationships are solved
 
@@ -202,7 +126,6 @@ lead and lag time between two related components; and three new properties —
 `CONCEPT` (formal, URI-valued categorisation as against `CATEGORIES`' informal
 tagging) and `REFID` (a grouping key with no implied semantics).
 
-**Finding 3 — hierarchy and dependency are a solved problem in iCalendar.**
 `PARENT`/`CHILD`, `DEPENDS-ON` and the four finish-to-start family cover the
 hierarchy and dependency relations Gitea, GitLab and Vikunja express, with room
 left over. For those, mapping *into* iCalendar is lossless rather than lossy — one
@@ -218,47 +141,35 @@ back to the originating tracker issue.
 `calendaring-jmap` will speak it, so the unified model must map to it as well as
 to iCalendar.
 
-Its `Task` object is closer to what a task tracker wants than `VTODO` is:
+Its `Task` object has those properties:
 
 - **`estimatedDuration`** (`Duration`) — the estimate, as a first-class field, no
-  overloading of the window (§5.2.3)
-- **`percentComplete`** (`UnsignedInt`, 0–100)
+  overloading of the window (§5.2.3) - mirrors the `ESTIMATED-DURATION` from the tasks draft
+- **`percentComplete`** (`UnsignedInt`, 0–100) - as in RFC 5545
 - **`progress`** (`String`) — `needs-action`, `in-process`, `completed`, `failed`,
-  `cancelled`, extensible via the IANA "JSCalendar Enum Values" registry or a
-  vendor prefix (§5.2.5)
+  `cancelled`, same as the tasks draft, but also extensible via the IANA "JSCalendar Enum Values" registry or a
+  vendor prefix (§5.2.5).
 - **`progressUpdated`** (`UTCDateTime`) — when `progress` was last set (§5.2.6)
 - **per-participant `progress` and `progressUpdated`**, with the task-level
   `progress` *derived* from the participants' when not set explicitly: `completed`
   if all participants are, else `failed` if any is, else `in-process` if any is,
   else `needs-action` (§5.2.5)
-- **`priority`** — `Int` 0–9, 1 highest, same convention as iCalendar (§4.4.1)
+- **`priority`** — `Int` 0–9, 1 highest, as in RFC 5545
 - **`relatedTo`** — `Relation` objects keyed by UID, but only `first`, `next`,
   `child`, `parent`; **RFC 9253's dependency types have no JSCalendar equivalent**
 - **`uid`**, **`updated`**, **`sequence`** for identity and change detection
 
-**Finding 4 — JSCalendar is ahead on progress modelling and behind on
-relationships.** Its per-participant progress with a derived task-level rollup
-is a genuinely better multi-user model than anything in iCalendar, and it is
-close to what several trackers do natively. But its four relation types cannot
-express `DEPENDS-ON` or the finish-to-start family, so a task graph that
-round-trips through JSCalendar loses dependency information that iCalendar can
-carry. The unified model should not adopt either lineage's relation vocabulary
-wholesale.
-
-### 1.6 Summary of the baseline
+### 1.6 Differences
 
 | Capability | RFC 5545 | + tasks draft | RFC 9253 | JSCalendar |
 |---|---|---|---|---|
 | Time estimate | overloaded onto `DURATION` | **`ESTIMATED-DURATION`** | — | **`estimatedDuration`** |
-| Time spent | **absent** | **absent** | — | **absent** |
-| Progress % | `PERCENT-COMPLETE` | `PERCENT-COMPLETE` | — | `percentComplete` |
 | Status | 4 values | 6 values + `VSTATUS` | — | 5 values, extensible |
 | Per-participant status | `PARTSTAT` | `PARTSTAT` + `FAILED` | — | per-participant `progress` |
 | Parent/child | `RELTYPE` | — | `RELTYPE` | `relatedTo` |
 | Dependencies | — | — | **`DEPENDS-ON`, F2S family, `GAP`** | **absent** |
 | External links | `URL`, `ATTACH` | — | **`LINK` + `LINKREL`** | `links` |
 | Formal categories | `CATEGORIES` | — | **`CONCEPT`** | `categories` / `keywords` |
-| Change detection | `SEQUENCE`, `LAST-MODIFIED` | — | — | `sequence`, `updated` |
 
 ---
 
@@ -269,6 +180,8 @@ Where a dimension does not exist in a system, that absence is itself the finding
 and is recorded as **absent** rather than omitted.
 
 ### 2.1 Gitea
+
+**What it is**: Web-UI exposing git-repositories and adding issue tracking and collaboration functionality.  An issue is a task.
 
 Source: [`modules/structs/issue.go`](https://github.com/go-gitea/gitea/blob/main/modules/structs/issue.go),
 [`issue_tracked_time.go`](https://github.com/go-gitea/gitea/blob/main/modules/structs/issue_tracked_time.go),
@@ -315,7 +228,7 @@ Source: [`modules/structs/issue.go`](https://github.com/go-gitea/gitea/blob/main
   Rate limiting is deployment-dependent (Gitea is self-hosted and ships no default
   API rate limit) **[unverified]**.
 
-**Gitea is the closest fit of the trackers surveyed to what item 1.6 needs**:
+**Assessment:** **Gitea is the closest fit of the trackers surveyed to what item 1.6 needs**:
 it has *both* an estimate and a per-entry spent-time log on one REST API, and it
 is self-hostable in a small container for the conformance suite. GitLab and
 OpenProject have both quantities too, but GitLab reaches per-entry timelogs only
@@ -326,6 +239,8 @@ nothing is the honest test of whether the capability declaration works. See
 Part 5.
 
 ### 2.2 GitLab
+
+**What it is**: Web-UI exposing git-repositories and adding issue tracking and collaboration functionality.  An issue is a task.  Open source version plus paid "enterprise edition".
 
 Source: [GitLab issues API](https://docs.gitlab.com/api/issues/).
 
@@ -366,13 +281,11 @@ Source: [GitLab issues API](https://docs.gitlab.com/api/issues/).
   OAuth; offset and keyset pagination. gitlab.com enforces documented request rate
   limits; self-managed instances configure their own.
 
-**Assessment.** GitLab's tiering is a practical problem for this project, not
-just a commercial one: several of the dimensions the survey cares about
-(blocking links, epics, multiple assignees, health status) cannot be exercised
-on a free self-hosted instance, so a conformance suite would test a different
-GitLab than most users have.
+**Assessment:** GitLab's tiering is a practical problem for this project; several of the dimensions the survey cares about (blocking links, epics, multiple assignees, health status) cannot be exercised using the open-source version of GitLab.
 
 ### 2.3 Vikunja
+
+**What it is**: Task/project management with Web-UI, API and smartphone app.
 
 Source: the instance's own OpenAPI documents —
 [v1 `docs.json`](https://try.vikunja.io/api/v1/docs.json) and
@@ -425,13 +338,11 @@ Source: the instance's own OpenAPI documents —
   deprecated in 3.0 and removed in 4.0, v2 is OpenAPI 3.1 — a backend written
   today should target v2.
 
-**Assessment.** Vikunja's `TimeEntry` is the shape that maps cleanly onto
-calendaring: a start, an end, a comment and a user is *exactly* a `VJOURNAL`
-with a `DTEND`, or a `VEVENT`. It is the strongest evidence in the survey for
-the interval model over the scalar model. It is also the system that most
-needs an estimate field and does not have one.
+**Assessment:** Vikunja gets full score when it comes to time tracking, but lacks time estimations.
 
 ### 2.4 Kanboard
+
+**What it is**: Task management web-ui following the kanban practices.
 
 Source: [Kanboard API — task procedures](https://docs.kanboard.org/v1/api/task_procedures/).
 
@@ -440,8 +351,7 @@ Source: [Kanboard API — task procedures](https://docs.kanboard.org/v1/api/task
   explicitly intended to hold a foreign key, which makes it the natural home for
   an iCalendar `UID`.
 - **Time estimate and time spent.** Both, as plain scalars on the task:
-  `time_estimated` and `time_spent`, in hours. **No per-entry log in the task API.**
-  This is the simplest of the three shapes: a number you overwrite.
+  `time_estimated` and `time_spent`, in hours.
 - **Status lifecycle.** `is_active` (1/0) as the completion flag, with the real
   workflow in `column_id` — board columns, which are **user-definable per project**.
   Kanboard is the canonical "status is whatever the board says" case.
@@ -464,6 +374,8 @@ Source: [Kanboard API — task procedures](https://docs.kanboard.org/v1/api/task
   API token; no pagination in the classic task procedures **[unverified]**.
 
 ### 2.5 Taskwarrior
+
+**What it is**: Task management CLI
 
 Sources: [`task.1`](https://github.com/GothenburgBitFactory/taskwarrior/blob/develop/doc/man/task.1.in)
 and the [TaskChampion task model](https://gothenburgbitfactory.org/taskchampion/tasks.html).
@@ -514,13 +426,12 @@ model is now TaskChampion's key-value model with Taskwarrior conventions on top.
 - **Auth, pagination, rate limiting.** Not applicable in the usual sense: the
   library would read the local replica or drive the `task` binary.
 
-**Assessment.** Taskwarrior is the system whose *identity* model matches
-iCalendar exactly (client-minted UUID, offline creation, sync afterwards) and
-whose *transport* model matches nothing else in this survey. It is the best
-case for the unified API's identity design and the worst case for its
-assumption that a backend is something you make HTTP requests to.
+**Assessment:** Taskwarrior is the system whose *identity* model matches
+iCalendar exactly (client-minted UUID, offline creation, sync afterwards).  It is not something it's possible to make HTTP requests to.
 
 ### 2.6 Emacs org-mode
+
+**What it is**: File format and emacs/lisp code.  The file may contain a list of tasks (and many other things).
 
 Sources: read from the installed Emacs 30.2 org sources — `org.el`, `org-clock.el`,
 `org-duration.el`.
@@ -570,7 +481,7 @@ Sources: read from the installed Emacs 30.2 org sources — `org.el`, `org-clock
 - **Search and filter.** Rich local queries (agenda views, `org-ql`), no server.
 - **Auth, pagination, rate limiting.** Not applicable; it is a text file.
 
-**Assessment.** org-mode is the single most informative system in this survey
+**Assessment:** org-mode is the single most informative system in this survey
 for item 1.6, because it independently arrived at the same decomposition the
 library needs: a scalar `Effort` estimate on the item, and a separate
 append-only log of start/end intervals for time actually spent. That two-part
@@ -578,6 +489,8 @@ shape is also Vikunja's. Two unrelated systems converging on it is the
 strongest design evidence available.
 
 ### 2.7 OpenProject
+
+**What it is**: Project management web application
 
 Source: [OpenProject API v3 — work packages](https://www.openproject.org/docs/api/endpoints/work-packages/).
 
@@ -620,7 +533,11 @@ partner is a separate question this survey does not answer.
   HAL+JSON collection.
 - **Auth, pagination, rate limiting.** API key or OAuth2; `offset`/`pageSize`.
 
+**Assessment:** Poor on identity
+
 ### 2.8 Request Tracker
+
+**What it is**: A tool primarily designed for answering and tracking inbound emails - primarily meant for IT departments rather than customer support organizations.  Inbound requests can be compared to tasks.
 
 Source: [`RT::Ticket`](https://docs.bestpractical.com/rt/5.0.5/RT/Ticket.html) (RT 5.0.5).
 
@@ -652,7 +569,11 @@ Source: [`RT::Ticket`](https://docs.bestpractical.com/rt/5.0.5/RT/Ticket.html) (
 - **Search and filter.** TicketSQL, a genuine server-side query language.
 - **Auth, pagination, rate limiting.** REST2 with token auth; paginated.
 
+**Assessment:** ...
+
 ### 2.9 EteSync / Etebase
+
+**What it is**: An encrypted transport layer for iCalendar.
 
 Sources: [`etesync-web/src/pim-types.ts`](https://github.com/etesync/etesync-web/blob/master/src/pim-types.ts),
 [`etesync/server`](https://github.com/etesync/server).
@@ -671,7 +592,7 @@ gap. EteSync inherits the estimate and time-spent problem rather than solving it
 - **Auth.** Etebase account plus an encryption password; **the server cannot read
   or filter content**, so all search is client-side by construction.
 
-**Assessment.** For the library, EteSync is architecturally a *sibling of the
+**Assessment:** For the library, EteSync is architecturally a *sibling of the
 local-file backend*, not of the trackers: opaque blobs of iCalendar, no
 server-side query, client-side filtering via `icalendar-searcher`. That is a
 much cheaper backend to add than any tracker, and it is a natural candidate
@@ -679,6 +600,8 @@ for "beyond the funded scope". Note the server repository's last commit is
 from July 2024 — the project is not archived, but it is not busy either.
 
 ### 2.10 Focalboard
+
+**What it is**: A task management web plugin for the chat system Mattermost
 
 Source: [`mattermost/focalboard`](https://github.com/mattermost/focalboard).
 
@@ -694,7 +617,7 @@ to survey — status, priority, dates and estimates are all whatever the board
 author created, discoverable only by reading the board's property definitions
 first.
 
-**Finding 5 — Focalboard should be dropped from the candidate list.** Both
+**Assessment:** **Focalboard should be dropped from the candidate list.** Both
 reasons are independently sufficient: it is unmaintained, and a schemaless
 board means a backend would have to map user-defined property *instances* onto
 the unified model with no reliable convention to key on. It remains
@@ -703,6 +626,8 @@ backend whose schema is only knowable at runtime — and the API should not make
 that impossible to express later.
 
 ### 2.11 Plain Markdown task files
+
+**What it is**: text files
 
 There is no single format, so this section surveys the two conventions with
 meaningful adoption.
@@ -787,7 +712,7 @@ So the dividing line is not hosted-versus-local but **who creates the object
 first**. A system that must work before it has ever spoken to a server has no
 choice but to let the client mint the identifier.
 
-**Finding 6 — the unified model cannot assume UID round-trips, and must say
+**the unified model cannot assume UID round-trips, and must say
 so.** A task created in this library and pushed to Gitea comes back with a
 different identity and no memory of the original. The model needs three
 separate concepts: the library's own `uid`, the backend's native id, and an
@@ -817,7 +742,7 @@ summing. Nothing goes the other way. GitLab and OpenProject make this explicit:
 both *have* per-entry logs internally and expose the scalar as the derived,
 read-only convenience on the task.
 
-**Finding 7 — this settles the open question in roadmap item 1.6.** Spent time
+**this settles the open question in roadmap item 1.6.** Spent time
 must be modelled as an **append-only log of entries**, each with an optional
 start and end, a duration, a user and a comment, with the scalar total
 derived. Two independent systems (org-mode and Vikunja) converged on exactly
@@ -835,7 +760,7 @@ declares the log unsupported and accepts writes of the aggregate.
 - **Configurable** — org-mode keywords, Kanboard columns, OpenProject status
   resources, RT queue lifecycles. RT alone also models the legal *transitions*.
 
-**Finding 8 — a normalised status enum is necessary and insufficient.** The
+**a normalised status enum is necessary and insufficient.** The
 model needs both: a normalised value drawn from the tasks draft's six
 (`PENDING`, `NEEDS-ACTION`, `IN-PROCESS`, `COMPLETED`, `CANCELLED`, `FAILED`),
 and the backend's **native status string preserved alongside it**, because
@@ -861,7 +786,7 @@ RFC 5545 has room for three. Taskwarrior implements seven, RT distinguishes
 `Starts` from `Started`, and both Markdown conventions independently chose a
 `start`/`scheduled`/`due` triple.
 
-**Finding 9 — `DTSTART` overloading is not a plann quirk, it is the universal
+**`DTSTART` overloading is not a plann quirk, it is the universal
 symptom.** Every system that takes tasks seriously ends up needing at least
 start-vs-scheduled-vs-due, and iCalendar forces those three into two slots.
 The unified model should carry the senses separately and map down to iCalendar
@@ -917,12 +842,11 @@ the field list:
 
 ### 4.2 The time model
 
-This is the part the survey exists to settle.
+
 
 ```
 Task.estimate        : Duration | None      # scalar; ESTIMATED-DURATION
 Task.remaining       : Duration | None      # OpenProject, RT only
-Task.percent_complete: int | None           # 0-100
 Task.time_log        : TimeLog              # append-only sequence
 Task.time_spent      : Duration             # derived: sum(time_log)
 
@@ -931,6 +855,7 @@ TimeEntry.end        : datetime | None      # None => still running
 TimeEntry.duration   : Duration             # always present; derived if start/end given
 TimeEntry.user       : Principal | None
 TimeEntry.comment    : str | None
+TimeEntry.percent_complete: int  None       # 0-100 - the last entry shows the actual percent complete status.
 TimeEntry.id         : str | None           # backend-native, for update/delete
 ```
 
@@ -938,9 +863,19 @@ TimeEntry.id         : str | None           # backend-native, for update/delete
 survey shows systems that carry each without the others; none may be derived from
 another.
 
+The `time_log` consists of TimeEntries that can be summed up to get the actual time spent working on the project.  It also tells when work was started and when the task was completed.
+
+In addition extra timestamps may be applied:
+
+* Creation time for the task
+* Earliest possible start (`dtstart` in tasks draft)
+* Expected start
+* Expected completion
+* Due
+
 ### 4.3 The iCalendar representation of time spent — a recommendation
 
-The gap is real (Finding 2) and the library must choose. plann's
+The gap is real and the library must choose. plann's
 [`NEXT_LEVEL.md`](https://github.com/pycalendar/plann/blob/master/NEXT_LEVEL.md)
 lists three candidates; the survey adds two more, one of which its own author
 half-proposed elsewhere in the same document.
@@ -956,20 +891,11 @@ half-proposed elsewhere in the same document.
 **The recommendation is D**, with E as the fallback for backends that cannot
 create sibling objects.
 
-A work-log entry *is* a thing that happened between two timestamps — which is
-precisely what a `VEVENT` is. Option D therefore needs no new syntax: each entry
-is a `VEVENT` with `DTSTART`/`DTEND`, a `RELATED-TO;RELTYPE=PARENT` pointing at
-the task's `UID`, and a marker distinguishing "work done" from "planned meeting"
+A work-log entry is a thing that happened between two timestamps.  A `VEVENT`
+also describes something happening between a `DTSTART` and an `END`.  Let `RELATED-TO;RELTYPE=PARENT` point at the task's `UID`, and a marker distinguishing "work done" from "planned meeting"
 (a `CATEGORIES` value or an `X-` property — this needs deciding). It maps
 **one-to-one onto Vikunja's `TimeEntry` and org-mode's `CLOCK:` lines**, the two
 systems the survey found had already solved this.
-
-Its practical advantage is the date-range column: `sum_hours` over a date range
-becomes a **server-side** `calendar-query` on `VEVENT`s, not a fetch-and-filter
-of every task in the calendar. B, C and E cannot do that, because a property on
-a `VTODO` or an unknown component is not date-range searchable. A could — RFC
-4791 defines time-range filtering on `VJOURNAL` — but A is invalid RFC 5545,
-and that alone rules it out.
 
 The cost is that work-log events appear in ordinary calendar views. The mitigation
 is to put them in their own collection, which is a configuration question rather
@@ -988,19 +914,13 @@ Option D is also the one plann's own `NEXT_LEVEL.md` gestures at when it propose
 the `VEVENT` contains planned time". The proposal here is that same pairing used
 for time *recorded* rather than time *planned*.
 
-### 4.4 Open questions for the author
+### 4.4 Details to be decided later
 
-These are decisions the survey has narrowed but cannot make:
+* How to tag an `VEVENT` as a work-log; can be done through `CATEGORIES:WORKLOG`, an `X-` property, or membership of a dedicated collection.
 
-1. **`DURATION` vs `ESTIMATED-DURATION`** (Finding 1). Recommended: write
-   `ESTIMATED-DURATION`, read it in preference, and read `DURATION`-as-estimate
-   only under an explicit plann-compatibility flag. This changes what plann writes,
-   so it is the author's call and it needs a migration note.
-2. **The marker for a work-log `VEVENT`** — `CATEGORIES:WORKLOG`, an `X-` property,
-   or membership of a dedicated collection.
-3. **Whether `remaining` is worth carrying** for two backends out of eleven.
-4. **Whether the native-status passthrough is a plain string or a typed object**
-   (RT and OpenProject can also report the legal transitions).
+* Should we carry the `remaining` duration, considering that only two backends out of eleven supports it?
+
+* How to transport the native-status passthrough (e.g. a plain string or a typed object - RT and OpenProject can also report the legal transitions).
 
 ---
 
@@ -1080,6 +1000,4 @@ architecture, and belong with 2.2 rather than 2.5).
 
 ---
 
-*Drafted with AI assistance (Claude Opus 5 via Claude Code); not yet reviewed
-by the author. Claims marked **[unverified]** have not been checked against a primary
-source.*
+*Original document written with AI assistance - Claude Opus 5 via Claude Code - read through, understood and edited by the author. Claims marked **[unverified]** have not been checked against a primary source.*
