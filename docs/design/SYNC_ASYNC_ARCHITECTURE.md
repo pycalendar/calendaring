@@ -1,8 +1,14 @@
 # Sync/async architecture: comparison
 
+Creating Python packages that can serve both sync and async usage without significant code duplication is a challenge.  The current paragraph and the decision at the end is hand-written, the rest of the document is almost entirely AI-generated.  This document provides the research fundament for deciding on the async/sync architecture of the calendaring client library.  The document does not hold significant value after the decision has been made - hence it's not worth putting lots of editorial efforts into it.
+
+---
+
 **Roadmap item:** [0.2 Sync/async architecture](ROADMAP.md#02-syncasync-architecture)
+
 **Status:** comparison complete; the decision (§11) is the author's and is
 pending
+
 **Deliverable:** this comparison, backed by runnable prototypes in
 [`prototypes/sync_async/`](../../prototypes/sync_async/)
 
@@ -709,7 +715,17 @@ did not write the enforcement.
 
 ## 11. Decision
 
-*To be written by the author.*
+This section is written by the human, trying to sum up my understanding of the whole thing above, possibly weighting feelings more than facts.
+
+For me, code generation makes sense when it goes from a higher level language to a lower level language.  I don't have problems with Gen-AI turning a simple paragraph in human language to 800 lines of Python code, I don't have problems with the compiler turning C code into a binary, etc.  When there is a need for Python code to duplicate Python code, it's a strong hint on shortcomings with the programming language.  From this perspective it feels more right to "play" with p2b than to go for p4.  I do find it difficult to wrap my head around the generator design, but I also like challenges - I'd learn more from the p2b-approach than the p4-approach.  p2b feels "intellectually right".
+
+Then again, looking into the "p2b"-code, it's butt ugly.  I also have the feeling that it can be hard to debug and hard for other human contributors to get in and understand things.
+
+Async code is also harder to understand than sync code, and a lot harder to debug - but at least it's a "trodden path".  With unasync, the sync code will be generated - but still relatively easy to navigate.  The comments in the async "source of truth" are preserved in the generated copy as far as I can see.
+
+So finally I've decided to go for unasync, for the better (though not perfect) aesthetics and debuggability.
+
+I think it's a sorry state both that one has to spend so much efforts at coming to a design decision, and that it's a practice of picking the "least worst" architecture.
 
 ---
 
