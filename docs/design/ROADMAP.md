@@ -258,9 +258,17 @@ and it is what makes each later backend cheap to add.
 - **Deliverable:** the chosen architecture, implemented and enforced
 
 **Tasks:**
-- [ ] Before implementing: a clean-context review of 0.2's `unasync` prototype
+- [x] Before implementing: a clean-context review of 0.2's `unasync` prototype
       (p4) and the claims the recommendation rests on
-- [ ] Implement 0.2's recommendation as reusable scaffolding
+- [ ] Implement 0.2's recommendation as reusable scaffolding: a recursive
+      generator that deletes orphans, and a freshness test that compares file
+      sets as well as contents
+- [ ] Gate CI on pyright, or mypy with `check_untyped_defs`, over both copies,
+      plus ruff F841; test that the checker flags a committed specimen; make
+      dev-only tools fail the build when missing in CI rather than skip
+- [ ] Check that `_async/` contains nothing a token rewrite breaks (`asyncio`,
+      third-party `Async*` names, `await(...)`); per-mode code goes in a
+      hand-written layer
 - [ ] Ensure the public type signatures are correct under mypy in **both** modes —
       the caldav failure was annotations that lie
 - [ ] Add whatever enforcement the chosen approach permits: a CI AST check, a
@@ -376,7 +384,9 @@ disagree.
 - [ ] Map caldav's compatibility-hint/quirk system onto the capability declaration
 - [ ] Handle the sync/async impedance between caldav's dual-mode design and
       whatever 1.3 chose — this is the interesting part, and the part most likely
-      to overrun
+      to overrun. caldav's `Async*` names are aliases of its dual-mode classes,
+      so a thin, honestly typed shim is needed for type checking to work in
+      this layer at all (see 0.2's comparison, *What is not settled*)
 - [ ] Pass the conformance suite
 - [ ] Record, do not silently fix, bugs found in `caldav` itself: those fixes are
       caldav's budget, not this project's

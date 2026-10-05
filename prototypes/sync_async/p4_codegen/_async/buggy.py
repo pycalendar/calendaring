@@ -1,8 +1,13 @@
-"""caldav's mistake, planted in async-first source.
+# Hand-written source; generate.py derives ../_sync/ from this file.
+"""caldav's mistake, planted in async-first source, in three shapes.
 
-``generate.py`` turns it into ``../_sync/buggy.py``, where the same line is a
+``generate.py`` turns it into ``../_sync/buggy.py``, where each slip is a
 *correct* sync call.  So the sync test suite passes and only async users lose
 the write - the asymmetry that makes p1 dangerous, reproduced in p4.
+
+``test_type_checker_flags_the_codegen_slip`` pins what a type checker makes of
+each shape, the misses included, so that the limits in section 5 of
+SYNC_ASYNC_ARCHITECTURE.md are asserted rather than claimed.
 """
 
 from __future__ import annotations
@@ -13,5 +18,11 @@ from p4_codegen._async.tasks import AsyncTask
 class AsyncBuggyTask(AsyncTask):
     async def uncomplete(self) -> AsyncTask:
         self.status = "NEEDS-ACTION"
-        self.save()  # BUG: missing await
+        self.save()  # SLIP bare: caught by default mypy and pyright
         return self
+
+    async def _touch(self):
+        self.save()  # SLIP untyped: default mypy skips unannotated bodies
+
+    async def save_all(self, tasks: list[AsyncTask]) -> None:
+        [t.save() for t in tasks]  # SLIP comprehension: neither checker errors

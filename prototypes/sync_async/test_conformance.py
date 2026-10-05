@@ -265,7 +265,7 @@ def test_every_io_body_has_both_facades() -> None:
 
 
 def test_static_check_passes_the_real_modules_and_catches_the_specimen() -> None:
-    """Section 10 calls ``check_ast.py`` a CI gate; the suite runs it.
+    """Section 10 calls ``check_ast.py`` a prototype, not a CI gate; the suite runs it.
 
     Known limits, recorded in section 10 as requirements for item 1.3: it only
     resolves names defined in the same file, flags any same-named attribute,
@@ -309,19 +309,80 @@ async def test_codegen_bug_is_async_only(store: Store) -> None:
     assert store.tasks["task-1"]["status"] == "COMPLETED"  # ...the server is stale
 
 
+def _require(module: str) -> Any:
+    """Import a dev-only tool; skip without it locally, fail without it in CI.
+
+    A plain ``importorskip`` would let a CI job that lacks the tool go green
+    without ever running the check (review finding M2).
+    """
+    import importlib
+    import os
+
+    try:
+        return importlib.import_module(module)
+    except ImportError:
+        if os.environ.get("CI"):
+            pytest.fail(f"{module} is required when CI is set")
+        pytest.skip(f"needs {module}: uv run --with {module}")
+
+
 def test_generated_sync_code_is_fresh(tmp_path: Path) -> None:
     """The committed ``_sync/`` must be exactly what unasync makes of ``_async/``.
 
-    This is what replaces a build step: an edit to the generated copy, or a
-    forgotten regeneration, fails here.
+    This is what replaces a build step.  It compares the *set* of files as well
+    as their contents, recursively, so an edit to the generated copy, a
+    forgotten regeneration, a new subpackage and an orphan left behind by a
+    deleted source all fail here.
     """
-    pytest.importorskip("unasync", reason="needs unasync: uv run --with unasync")
+    _require("unasync")
     from p4_codegen import generate
 
-    here = Path(generate.__file__).parent
-    for fresh in generate.generate(tmp_path):
-        committed = here / "_sync" / fresh.name
-        assert committed.read_text() == fresh.read_text(), f"_sync/{fresh.name} is stale"
+    committed_root = Path(generate.__file__).parent / "_sync"
+    fresh = generate.generate(tmp_path)
+    committed = {p.relative_to(committed_root) for p in committed_root.rglob("*.py")}
+    assert committed == fresh, "file sets differ: run p4_codegen/generate.py"
+    for rel in sorted(fresh):
+        assert (committed_root / rel).read_text() == (tmp_path / "_sync" / rel).read_text(), (
+            f"_sync/{rel} is stale"
+        )
+
+
+def _slip_lines(path: Path) -> dict[str, int]:
+    """Line numbers of the ``# SLIP <shape>`` markers in a specimen."""
+    out: dict[str, int] = {}
+    for i, line in enumerate(path.read_text().splitlines(), start=1):
+        if "# SLIP " in line:
+            out[line.split("# SLIP ")[1].split(":")[0]] = i
+    return out
+
+
+def test_type_checker_flags_the_codegen_slip() -> None:
+    """p4's enforcement *is* the type checker, so the suite must assert it fires.
+
+    Pins all three shapes in ``_async/buggy.py``: the bare call is caught by
+    default mypy; the unannotated helper only with ``--check-untyped-defs``;
+    the comprehension by neither.  The last two are limits, asserted so that
+    a change in mypy's behaviour shows up here rather than going unnoticed.
+    """
+    import subprocess
+    import sys
+
+    _require("mypy")
+    here = Path(__file__).parent
+    specimen = here / "p4_codegen" / "_async" / "buggy.py"
+    lines = _slip_lines(specimen)
+
+    def flagged(*flags: str) -> set[int]:
+        out = subprocess.run(
+            [sys.executable, "-m", "mypy", "--no-incremental", "--cache-dir=/dev/null", *flags, str(specimen)],
+            capture_output=True, text=True, cwd=here, env={**__import__("os").environ, "MYPYPATH": str(here)},
+        )
+        return {
+            int(ln.split(":")[1]) for ln in out.stdout.splitlines() if "[unused-coroutine]" in ln
+        }
+
+    assert flagged() == {lines["bare"]}
+    assert flagged("--check-untyped-defs") == {lines["bare"], lines["untyped"]}
 
 
 @pytest.mark.parametrize(
@@ -333,6 +394,16 @@ def test_generated_sync_code_is_fresh(tmp_path: Path) -> None:
         ("client = httpx.AsyncClient()", "client = httpx.SyncClient()"),
         # concurrency: gather() survives, and is meaningless without a loop
         ("a, b = await asyncio.gather(f(), g())", "a, b = asyncio.gather(f(), g())"),
+        # backoff: the sync copy builds a coroutine and drops it
+        ("await asyncio.sleep(backoff)", "asyncio.sleep(backoff)"),
+        # not in unasync's table: httpx's sync client calls it close()
+        ("await self._http.aclose()", "self._http.aclose()"),
+        ("item = await anext(it)", "item = anext(it)"),
+        # unchanged annotations
+        ("def f() -> Awaitable[int]: ...", "def f() -> Awaitable[int]: ..."),
+        ('def f() -> "list[AsyncTask]": ...', 'def f() -> "list[AsyncTask]": ...'),
+        # the token after `await` is skipped blindly: a syntax error
+        ("await(self.save())", "self.save())"),
     ],
 )
 def test_unasync_is_a_token_rewrite(async_src: str, naive_sync: str) -> None:
@@ -341,9 +412,10 @@ def test_unasync_is_a_token_rewrite(async_src: str, naive_sync: str) -> None:
     Each of these is a correct async line whose unasync'ed form is wrong.  In
     p4 they are absent only because the transports are supplied from outside;
     a real library needs hand-written per-mode shims for them (httpcore keeps
-    a ``_synchronization.py`` and a backend pair for exactly this).
+    a ``_synchronization.py`` and a backend pair for exactly this).  mypy over
+    ``_sync/`` flags some of them (the dropped ``sleep``), not all.
     """
-    unasync = pytest.importorskip("unasync", reason="needs unasync: uv run --with unasync")
+    unasync = _require("unasync")
     import tokenize_rt
 
     rule = unasync.Rule("/_async/", "/_sync/")

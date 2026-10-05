@@ -58,6 +58,19 @@ def make(proto: str, mode: str, store: Store) -> Any:
     return p3_greenlet.Collection(transport)
 
 
+def _short(filename: str) -> str:
+    """A frame's file relative to this directory, else its basename.
+
+    p4 has a ``tasks.py`` in both ``_async/`` and ``_sync/``; a bare basename
+    would not say which copy failed.
+    """
+    p = Path(filename)
+    try:
+        return str(p.relative_to(HERE))
+    except ValueError:
+        return p.name
+
+
 def capture_traceback(proto: str, mode: str) -> tuple[int, list[str], str]:
     """Fail on page 2 of a paginated search; return (frames, files, text)."""
     store = Store().seed(5)
@@ -78,7 +91,7 @@ def capture_traceback(proto: str, mode: str) -> tuple[int, list[str], str]:
         text = buf.getvalue()
         tb = sys.exc_info()[2]
         frames = traceback.extract_tb(tb)
-        files = [Path(f.filename).name for f in frames]
+        files = [_short(f.filename) for f in frames]
         return len(frames), files, text
     raise AssertionError("expected BackendError")
 
@@ -175,27 +188,32 @@ def scaling_table() -> None:
     label = "p2b Sans-I/O + typed"
     rows.append((label, total, fixed, per, ops))
     print(f"  {label:24} total={total:4}  fixed={fixed:3}  ops={ops}  per method={per:5.1f}")
-    # p4: only _async/ is written by hand.  Its fixed cost is the generator
-    # script (build tooling, not shipped); _sync/ is shipped but not written.
+    # p4: only _async/ is written by hand.  Counted by p2b's rule: module-level
+    # setup is fixed, the rest is per method.  Tooling is charged to neither
+    # design here (review finding m3) and is printed separately below.
     src = HERE / "p4_codegen" / "_async" / "tasks.py"
-    fixed = code_lines(HERE / "p4_codegen" / "generate.py")
+    setup = machinery_lines(src, [])
     ops = count_ops(src)
-    per = code_lines(src) / ops
-    total = int(fixed + ops * per)
+    per = (code_lines(src) - setup) / ops
+    total = int(setup + ops * per)
     label = "p4 unasync, written"
-    rows.append((label, total, fixed, per, ops))
-    print(f"  {label:24} total={total:4}  fixed={fixed:3}  ops={ops}  per method={per:5.1f}")
+    rows.append((label, total, setup, per, ops))
+    print(f"  {label:24} total={total:4}  fixed={setup:3}  ops={ops}  per method={per:5.1f}")
     shipped = code_lines(src) + code_lines(HERE / "p4_codegen" / "_sync" / "tasks.py")
     print(f"  {'':24} shipped, both copies: {shipped} lines")
+    print()
+    print("  Tooling, not shipped and not counted above:")
+    print(f"    p2b check_ast.py         {code_lines(HERE / 'check_ast.py'):4} lines")
+    print(f"    p4  generate.py          {code_lines(HERE / 'p4_codegen' / 'generate.py'):4} lines")
     print()
     print("  Extrapolated to caldav's 57 dual-mode methods (fixed + 57 x per):")
     for label, total, fixed, per, ops in rows:
         print(f"    {label:24} ~{int(fixed + 57 * per):5} lines")
     print()
-    print("  NOTE: lines of code are NOT the argument for the recommendation -")
-    print("  correctness is.  p2b is the largest at scale: typed facades are paid")
-    print("  per method.  p1 buys its smaller footprint by making every composite")
-    print("  method a latent bug; see the demonstrations and tracebacks below.")
+    print("  NOTE: lines of code are NOT the argument for the recommendation.")
+    print("  p2b is the largest at scale: typed facades are paid per method.  p1")
+    print("  buys its footprint by making every composite method a latent bug;")
+    print("  p4 by writing in the one style a token rewrite can translate.")
 
 
 def demos() -> None:
@@ -254,18 +272,46 @@ def demos() -> None:
 
     print()
     print("=" * 72)
-    print("THE CODEGEN SLIP  (p4: a missing await, found by an unconfigured type checker)")
+    print("THE CODEGEN SLIP  (p4: which shapes of a missing await a type checker flags)")
     print("=" * 72)
-    for target in ("p4_codegen/_async/buggy.py", "p4_codegen/_sync/buggy.py", "p1_dual_mode.py"):
-        out = subprocess.run(
-            [sys.executable, "-m", "mypy", "--no-incremental", "--cache-dir=/dev/null", target],
-            capture_output=True, text=True, cwd=HERE, env={**os.environ, "MYPYPATH": str(HERE)},
-        )
+    specimen = HERE / "p4_codegen" / "_async" / "buggy.py"
+    shapes = {
+        i: line.split("# SLIP ")[1].split(":")[0]
+        for i, line in enumerate(specimen.read_text().splitlines(), start=1)
+        if "# SLIP " in line
+    }
+    checkers = {
+        "mypy": [sys.executable, "-m", "mypy", "--no-incremental", "--cache-dir=/dev/null"],
+        "mypy --check-untyped-defs": [
+            sys.executable, "-m", "mypy", "--no-incremental", "--cache-dir=/dev/null", "--check-untyped-defs",
+        ],
+        "pyright": ["pyright", "--pythonpath", sys.executable],
+    }
+    print(f"  {'shape':14} " + "  ".join(f"{name:>25}" for name in checkers))
+    results: dict[str, set[int] | None] = {}
+    for name, cmd in checkers.items():
+        try:
+            out = subprocess.run(
+                [*cmd, str(specimen)], capture_output=True, text=True, cwd=HERE,
+                env={**os.environ, "MYPYPATH": str(HERE), "PYTHONPATH": str(HERE)},
+            )
+        except FileNotFoundError:
+            results[name] = None
+            continue
         if "No module named mypy" in out.stderr:
-            print("  mypy not installed - skipped")
-            break
-        lines = [ln for ln in out.stdout.splitlines() if ": error:" in ln and "unused-coroutine" in ln]
-        print(f"  {target:28} " + (lines[0].split(": error: ")[1] if lines else "no unused-coroutine error"))
+            results[name] = None
+            continue
+        results[name] = {
+            int(ln.split(".py:")[1].split(":")[0])
+            for ln in out.stdout.splitlines()
+            if "unused-coroutine" in ln or "reportUnusedCoroutine" in ln
+        }
+    for lineno, shape in shapes.items():
+        cells = []
+        for name in checkers:
+            r = results[name]
+            cells.append("not installed" if r is None else ("flagged" if lineno in r else "MISSED"))
+        print(f"  {shape:14} " + "  ".join(f"{c:>25}" for c in cells))
 
 
 def main() -> None:
@@ -303,7 +349,7 @@ def main() -> None:
     for proto in ("p1_dual_mode", "p2_sansio", "p3_greenlet", "p4_codegen"):
         for mode in ("sync", "async"):
             n, names, text = capture_traceback(proto, mode)
-            objlayer = "yes" if any(f.startswith(("p1_", "p2_", "p3_")) or f == "tasks.py" for f in names) else "NO"
+            objlayer = "yes" if any(f.startswith(("p1_", "p2_", "p3_", "p4_")) for f in names) else "NO"
             print(f"  {proto:14} {mode:6} frames={n:2}  object-layer frame visible: {objlayer}")
             print(f"       {' -> '.join(names)}")
     print()
