@@ -1,24 +1,43 @@
-# Sync/async architecture: comparison and recommendation
+# Sync/async architecture: comparison
 
 **Roadmap item:** [0.2 Sync/async architecture](ROADMAP.md#02-syncasync-architecture)
-**Status:** recommendation accepted by the author; p4 reviewed in a clean
-context and the findings applied
+**Status:** comparison complete; the decision (§11) is the author's and is
+pending
 **Deliverable:** this comparison, backed by runnable prototypes in
 [`prototypes/sync_async/`](../../prototypes/sync_async/)
 
-**Recommendation in one line:** write the object layer async-first and generate
-the sync copy with `unasync`, committing the output — one hand-written
-implementation in plain `async`/`await` and two real classes with correct types.
-This is an **ergonomic** choice: on composition safety p2b is still better (§5).
+**In one paragraph:** of the five candidates, two hold up: a generator-based
+Sans-I/O core with two thin typed façades (**p2b**), and async-first source with
+an `unasync`-generated sync copy (**p4**). Dual-mode (p1) is the design whose
+failures prompted this item, greenlet (p3) is no safer and adds a C dependency
+(§8), and separate hand-written classes duplicate every method (§3). p2b and p4
+both give one implementation of every I/O method and correct public types in
+both modes (§6). They differ in how they catch the composition mistake (§5) and
+in what writing and maintaining them costs (§7, §10). The prototypes do not
+settle which serves the project better; §10 sets out the trade, and this
+document does not recommend one over the other.
 
-**Revised after prototyping `unasync`.** The previous draft recommended a
-generator-based Sans-I/O core with typed façades (p2b) and left codegen
-untested because the author had called it unattractive. The author withdrew that
-as a reason not to look, and p4 was built. Against p2b it wins on size (§7) and
-narrowly on tracebacks (§8), ties on types (§6), and **loses** on catching the
-composition mistake (§5). It is recommended anyway because methods that make
-several round trips read as ordinary async code instead of generator plumbing.
-§10 says when p2b would be the better choice.
+**The trade in short.** Methods that make several round trips read the same in
+both (§10 shows them side by side).
+
+- **p2b** turns the exact caldav mistake — calling a public I/O method from
+  inside another — into an exception, in sync tests as well as async ones. It
+  has no generated code and no build step, and its bodies cannot `await`, so
+  `asyncio` stays out of them by construction rather than by rule. It costs a
+  façade layer (about 8.6 mechanical lines per I/O method, §7), a core typed
+  through `Any` so the checker does not see inside the bodies, and a rule
+  contributors must learn: compose with `yield from self._io_x()`, never call
+  the public name. Forgetting the `yield from` is silent at runtime; a
+  project-written AST check catches it, and so does pyright's opt-in, noisy
+  `reportUnusedCallResult`.
+- **p4** gives plain `async`/`await` bodies that a type checker sees into, and
+  no façades. A missing `await` is flagged in its common shapes by stock type
+  checkers and at runtime only by a `RuntimeWarning`, which `-W error` turns
+  into a failure on paths an async test runs. It costs a generated `_sync/`
+  copy that tracebacks and breakpoints point into, a freshness test, a
+  type checker as a hard CI gate, and a rule contributors must learn: nothing in
+  `_async/` that a token rewrite breaks (`asyncio`, third-party `Async*`
+  names).
 
 ---
 
@@ -31,24 +50,25 @@ Everything measured below has been prototyped and tested; four architectures are
 | [`common.py`](../../prototypes/sync_async/common.py) | the toy backend, its sync/async/filesystem transports, and a fake server |
 | [`p1_dual_mode.py`](../../prototypes/sync_async/p1_dual_mode.py) | runtime dual-mode — the caldav 3.x pattern, as the control |
 | [`p2_sansio.py`](../../prototypes/sync_async/p2_sansio.py) | generator-based Sans-I/O |
-| [`p2_sansio_bug.py`](../../prototypes/sync_async/p2_sansio_bug.py) | the caldav mistake, planted, so both enforcement mechanisms have a committed specimen |
-| [`p2_typed.py`](../../prototypes/sync_async/p2_typed.py) | the same core plus typed façades — the runner-up |
+| [`p2_sansio_bug.py`](../../prototypes/sync_async/p2_sansio_bug.py) | two planted shapes of the composition mistake: the public-name call the guard catches, and the dropped `_io_` generator only a static check catches |
+| [`p2_typed.py`](../../prototypes/sync_async/p2_typed.py) | the same core plus typed façades — one of the two remaining candidates |
 | [`p3_greenlet.py`](../../prototypes/sync_async/p3_greenlet.py) | greenlet bridging, the SQLAlchemy pattern |
-| [`p4_codegen/_async/tasks.py`](../../prototypes/sync_async/p4_codegen/_async/tasks.py) | async-first, the only hand-written copy — **the recommendation** |
+| [`p4_codegen/_async/tasks.py`](../../prototypes/sync_async/p4_codegen/_async/tasks.py) | async-first, the only hand-written copy — the other remaining candidate |
 | [`p4_codegen/_sync/tasks.py`](../../prototypes/sync_async/p4_codegen/_sync/tasks.py) | its sync copy, generated by `unasync` and committed |
 | [`p4_codegen/generate.py`](../../prototypes/sync_async/p4_codegen/generate.py) | the generator; a test fails if the committed copy is stale |
 | [`p4_codegen/_async/buggy.py`](../../prototypes/sync_async/p4_codegen/_async/buggy.py) | the caldav mistake, planted in async-first source |
 | [`test_conformance.py`](../../prototypes/sync_async/test_conformance.py) | one suite, 5 prototypes × 2 modes |
 | [`measure.py`](../../prototypes/sync_async/measure.py) | produces every number quoted here |
-| [`check_ast.py`](../../prototypes/sync_async/check_ast.py) | p2b's static check; relevant only if p2b is chosen |
+| [`check_ast.py`](../../prototypes/sync_async/check_ast.py) | p2b's static check; a prototype for the gate 1.3 needs |
 
 Reproduce from the repository root with `uv run --python 3.14 --with unasync
 --with pytest --with pytest-asyncio --with greenlet --with mypy python -m pytest
 prototypes/sync_async/ -q`, and the same for `measure.py` (add pyright to the
-path for its column in §5). Current result: **108 passed, 1 xfailed**. Without
+path for its column in §5). Current result: **110 passed, 1 xfailed**. Without
 `unasync` or `mypy` the tests that need them skip, unless `CI` is set, in which
 case they fail — a CI job that lacks a tool must not go green. Every fenced
-output block below is printed by `measure.py`, on Python 3.14.
+output block below is printed by `measure.py`, on Python 3.14; two are
+abridged, as marked.
 
 The xfail is the dual-mode bug. It is applied as a **strict** marker rather than
 by calling `pytest.xfail()`, so it asserts two things rather than none: that the
@@ -93,9 +113,9 @@ awaited` that Python does emit is too weak to count;
 
 So the failure is *not literally silent*, but it is silent enough that every
 instance in caldav was found by writing a test for it rather than by observing
-it. The distinction matters for the comparison: an approach that turns this into
-an exception is strictly better, and an approach that turns it into an exception
-**in sync mode as well** is better again.
+it. The comparison therefore asks, for each design, which shapes of the
+mistake raise an exception, which do so in sync tests as well as async ones,
+and which are caught statically, and by what.
 
 ---
 
@@ -118,10 +138,8 @@ It is the honest baseline for "correct but duplicated". p4 is in effect this
 design with the second copy generated, and §6 shows that p2b gets the same
 typing benefit by hand-written façades instead.
 
-**`unasync` codegen** was skipped in the first draft because the author had
-called "write async, generate sync" unattractive. That was a preference, not a
-finding, so p4 now tests it. It follows httpcore rather than unasync's own
-`setup.py` hook: the generated `_sync/` copy is **committed**, and
+**`unasync` codegen** follows httpcore rather than unasync's own `setup.py`
+hook: the generated `_sync/` copy is **committed**, and
 `test_generated_sync_code_is_fresh` regenerates it and fails on any difference.
 That turns the build step into a dev-time step — installing the library runs
 nothing, and `unasync` (which imports `setuptools` and `tokenize_rt`) is a
@@ -152,35 +170,34 @@ made for any of them.
 
 ## 5. Result: correctness under composition
 
-This was the deciding dimension in the previous draft, and p2b still wins it.
-The recommendation now weighs it against ergonomics (§10) rather than letting it
-decide alone.
+This is where p2b and p4 differ most. Neither catches every shape at runtime;
+they cover different shapes with different tools.
 
 | | Composite method that forgets the rule | Caught in sync mode? | Caught in async mode? | Catchable statically? |
 |---|---|---|---|---|
 | p1 dual-mode | silently does nothing | **no — the code is correct in sync** | only a `RuntimeWarning` | no |
-| p2 Sans-I/O | raises `SansIOMisuse` | **yes** | **yes** | **yes** |
-| p2b typed façade | raises `SansIOMisuse` | **yes** | **yes** | **yes** |
-| p3 greenlet | silently does nothing | **no** | **no** | no |
-| p4 unasync | does nothing in async mode | **no — the generated sync copy is correct** | only a `RuntimeWarning` | **partly** — some shapes, by stock type checkers |
+| p2 / p2b, public name called | raises `SansIOMisuse` | yes | yes | partly — project-written AST check, with known holes |
+| p2 / p2b, `_io_` body without `yield from` | silently does nothing | no | no | partly — the same AST check; pyright's opt-in `reportUnusedCallResult` |
+| p3 greenlet | silently does nothing | no | no | no |
+| p4 unasync, missing `await` | does nothing in async mode | no — the generated sync copy is correct | only a `RuntimeWarning` | partly — some shapes, by stock type checkers |
 
 p1's row is the whole problem: the mistake is **invisible in the mode most
 developers run their tests in**. A contributor writes a composite method, the
 sync suite passes, and the bug ships to async users.
 
-**p3's row was wrong in an earlier draft**, which claimed the mistake "cannot
-happen" because composition in greenlet is a plain method call. It can: p3 also
-has a public wrapper (`save = public(_save)`) beside the body (`_save`), so a
-composite body that calls `self.save()` instead of `self._save()` reproduces
-p1's failure exactly — a coroutine from `greenlet_spawn`, created and dropped.
-p3 has neither a runtime guard nor a static check for it, so on this axis it is
-p1's equal, not p2's better. §8 follows the consequences.
+**p3's row may look surprising**, since composition in greenlet is a plain
+method call. But p3 also has a public wrapper (`save = public(_save)`) beside
+the body (`_save`), so a composite body that calls `self.save()` instead of
+`self._save()` reproduces p1's failure exactly — a coroutine from
+`greenlet_spawn`, created and dropped. p3 has neither a runtime guard nor a
+static check for it, so on this axis it is p1's equal, not p2's better. §8
+follows the consequences.
 
-p2 fixes this with a `ContextVar`. Calling a public I/O method from inside
-another one raises immediately, and — decisively — it raises in sync mode too:
+p2 fixes the caldav shape with a `ContextVar`. Calling a public I/O method from
+inside another one raises immediately, and it raises in sync mode too:
 
 ```
-THE SANS-I/O GUARD  (fires in both modes, from p2_sansio_bug.py)
+THE SANS-I/O GUARD  (fires in both modes, from p2_sansio_bug.py; abridged)
   sync   SansIOMisuse: a public I/O method was called from inside another I/O method.
   async  SansIOMisuse: a public I/O method was called from inside another I/O method.
 ```
@@ -193,22 +210,39 @@ discards the check along with it. This is why the async façades in `p2_typed` a
 plain `def` returning a coroutine rather than `async def`. (`await
 coll.get_task(...)` is unaffected, and §6's typing results are unchanged.)
 
-The static check is the belt to those braces, and it runs against the same
-committed specimen:
+**The guard does not cover the other shape.** A body that calls the *private*
+body but forgets `yield from` — `self._io_save()` as a bare statement — builds
+a generator and drops it unstarted. No public name is called, so the guard never
+runs, and Python does not warn about a generator that was never started. The
+write is lost in both modes, silently, even under `-W error`.
+`test_dropped_io_body_is_silent_at_runtime` plants it in p2b's shared core and
+pins the hole; `p2_sansio_bug.py` holds the same shape (`_io_reopen`) for the
+static check.
+
+mypy does not flag an unused generator. pyright does, but only with
+`reportUnusedCallResult`, which is off by default and in strict mode and flags
+*every* unused return value, so enabling it means silencing legitimate ones
+(assigning to `_`). Its noise on a real codebase has not been measured. Checked
+by hand with `pyright` and `{"reportUnusedCallResult": "error"}` against
+`p2_sansio_bug.py`: it reports line 45.
+
+So for this shape the static check is the protection, not a belt to the
+guard's braces. It runs against the same committed specimen:
 
 ```
-THE STATIC CHECK  (same bug, found without running anything)
+THE STATIC CHECK  (same bug, found without running anything; abridged)
   OK - no Sans-I/O composition violations in p2_sansio.py, p2_typed.py
   -> exit 0
-  p2_sansio_bug.py:33: save() is the public wrapper - in _io_uncomplete() use 'yield from self._io_save()'
-  1 violation(s)
+  p2_sansio_bug.py:37: save() is the public wrapper - in _io_uncomplete() use 'yield from self._io_save()'
+  p2_sansio_bug.py:45: _io_save() in _io_reopen() without 'yield from'
+  2 violation(s)
   -> exit 1
 ```
 
-Both lines matter. It finds the planted bug, **and** it passes p2b — an earlier
-version of the checker did neither: it missed the public-wrapper shape entirely
-and reported eight false violations against `p2_typed.py`, the architecture it
-exists to protect.
+Both halves matter: a checker that flagged the façades' own driver calls would
+reject the architecture it exists to protect. And it is a prototype with known
+holes (§10, *What is not settled*, 6), so building it properly is part of
+choosing p2b.
 
 **p4 is partly caught by tooling that already exists.** Its row looks like
 p1's at runtime — the slip is invisible in sync mode, because `self.save()` *is*
@@ -232,8 +266,8 @@ THE CODEGEN SLIP  (p4: which shapes of a missing await a type checker flags)
 
 `bare` is the caldav shape. `untyped` is the same line in an unannotated helper:
 default mypy does not check unannotated bodies at all, so **1.3 must run pyright,
-or mypy with `check_untyped_defs`**. The clean-context review probed further
-shapes; both checkers also miss these:
+or mypy with `check_untyped_defs`**, if p4 is chosen. Further probing found
+shapes both checkers miss:
 
 - `r = self.save()` never awaited, also inside a loop (ruff's default F841
   flags the unused name, which makes it a third tool in the chain);
@@ -241,11 +275,14 @@ shapes; both checkers also miss these:
   `log("saved", self.save())`, `if (r := self.save()):`;
 - `return self.save()` from a function annotated `-> Any` or not at all;
 - any call on a receiver typed `Any` or `X | Coroutine` — which is every caldav
-  object (§10, *What is not settled*).
+  object (§10, *What is not settled*, 5).
 
 So p4's check covers the common shapes, not every shape, and it is static only.
-p2b's runtime guard fires at the call for every row of that list, in sync tests
-as well. That is the real price of the recommendation.
+p2b's runtime guard fires for every one of those shapes when the call is to one
+of this library's public names, in sync tests as well. p2b's own silent shape,
+the dropped `_io_` generator, is the counterweight (above). caldav's own
+methods sit below the drivers, where neither design protects them (*What is
+not settled*, 5).
 
 One measure helps p1 and p4 alike: running the test suite with `-W error` makes
 the never-awaited warning fail the async test that triggers it, through pytest's
@@ -274,7 +311,7 @@ results; pyright agrees for p4)
 | p2 Sans-I/O bare | ok | **missed** | **missed** |
 | p3 greenlet | ok | **missed** | **missed** |
 | p2b typed façade | ok | caught | caught |
-| **p4 unasync** | **ok** | **caught** | **caught** |
+| p4 unasync | ok | caught | caught |
 
 p1's `Union[Any, Coroutine]` is the worst outcome available: it rejects *correct*
 code as well as catching one of the two errors. In practice a caller silences it
@@ -318,12 +355,11 @@ does the constructing. So there is nothing to keep in sync but signatures, and
 [`test_every_io_body_has_both_facades`](../../prototypes/sync_async/test_conformance.py)
 asserts that mechanically rather than leaving it to discipline.
 
-That property had to be *fixed*, not merely claimed: the first draft of
-`p2_typed` moved object construction out of the shared bodies and into both
-façades, which duplicated real per-mode logic in the one mechanism advertised as
-duplication-free. The review caught it. It is worth knowing that this is the
-natural drift for this design, and that the completeness test above does not
-catch it — only reading the façades does.
+The natural drift for this design is to move object construction out of the
+shared bodies and into both façades, which duplicates real per-mode logic in
+the one mechanism advertised as duplication-free. The completeness test above
+does not catch that — only reading the façades does, so it belongs on 1.3's
+review checklist.
 
 mypy's message for Case 2 is even actionable: *"Coroutine[Any, Any, AsyncTask]
 has no attribute summary. Maybe you forgot to use await?"*
@@ -345,23 +381,20 @@ From `measure.py`, code lines only (no blanks, comments or docstrings):
 | p2 generator Sans-I/O | 94 | 50 | 5 | 8.8 |
 | p3 greenlet | 91 | 43 | 5 | 9.6 |
 | p2b Sans-I/O + typed façades | 129 | 42 | 5 | 17.4 |
-| **p4 unasync** (hand-written only) | 40 | 3 | 5 | 7.4 |
+| p4 unasync (hand-written only) | 40 | 3 | 5 | 7.4 |
 
 p2b is `p2_typed.py` (91 lines: a core of its own plus the façades) and the
-drivers and guard it imports from `p2_sansio.py` (38 lines). An earlier draft
-added the whole of `p2_sansio.py` instead and so counted every I/O body twice.
+drivers and guard it imports from `p2_sansio.py` (38 lines).
 
 p4 is counted by p2b's rule: module-level setup is fixed, the rest is per
 method. Its 40 lines of async source become 80 shipped lines once the generated
 copy is added, but only 40 are ever written or reviewed. Tooling is charged to
-neither design: p2b's `check_ast.py` is 68 lines, p4's `generate.py` 33. (An
-earlier p4 draft charged `generate.py` as fixed and its imports per method,
-which happened to count against p4.)
+neither design: p2b's `check_ast.py` is 68 lines, p4's `generate.py` 33.
 
 Extrapolating the slopes to caldav's **57** `_async_*` methods (counted with
-`grep -rc "async def _async_" caldav/` on 2026-09-02): roughly **836 / 551 /
-590 / 1033 / 424** lines for p1 / p2 / p3 / p2b / p4. p4 is the smallest
-hand-written, because a method is written once in the plainest style available;
+`grep -rc "async def _async_" caldav/` on 2026-09-02): roughly **836 / 551 / 590
+/ 1033 / 424** lines for p1 / p2 / p3 / p2b / p4. p4 is the smallest
+hand-written, because a method is written once and the second copy is generated;
 p2b is the largest, because each I/O method costs one core body *and* two façade
 methods.
 
@@ -369,19 +402,19 @@ It is still **not** the argument for anything. Anyone choosing on line count is
 choosing on the wrong axis, and the numbers move whenever the toy does: an
 earlier draft of this table reported a ~25% gap because `measure.py` divided
 every file by a hard-coded five methods, which charged p2 for a sixth body it
-happened to contain and excluded module-level setup from "fixed". A later review
-found that the table then set p1 against bare p2 rather than against the
-recommendation. A measurement that can drift like that should be read as an
-order of magnitude, not a score. `measure.py` now counts the methods rather than
+happened to contain and excluded module-level setup from "fixed". A
+measurement that can drift like that should be read as an order of magnitude,
+not a score. `measure.py` now counts the methods rather than
 assuming them, and prints the p2b row.
 
 The typed façades are p2b's real, visible price: about 8.6 lines per I/O method
 on top of the core, which takes its per-method cost (17.4) past p1's (14.6). p4
-gets the same signatures for none of that.
+gets the same signatures without hand-written façades, and pays instead with a
+generated copy, its generator and a freshness test.
 
 ---
 
-## 8. greenlet: no longer competitive
+## 8. greenlet: not competitive
 
 A backend error raised on **page 2 of a paginated search** — a failure partway
 through a loop of I/O, which is the realistic bad case:
@@ -411,11 +444,10 @@ generator replaces with its do-not-edit marker, so no line shifts. A debugger
 breakpoint still has to be set in the generated file, and a fix typed there is
 overwritten on the next regeneration — which the freshness test makes loud.
 
-**Why greenlet stops being the runner-up.** An earlier draft of this document
-argued that greenlet wins if the author values a rule that *cannot be broken*
-over a rule enforced twice — and offered the C dependency and this traceback as
-the price. §5 retracts the premise: the rule can be broken in greenlet exactly as
-in dual-mode, and nothing catches it.
+**Why greenlet is not competitive.** The case for it would be a rule that
+*cannot be broken* rather than one enforced twice, with the C dependency and
+this traceback as the price. §5 removes the premise: the rule can be broken in
+greenlet exactly as in dual-mode, and nothing catches it.
 
 With that gone, what is left on greenlet's side is ergonomic rather than safety:
 composition reads as ordinary blocking code, with no `yield from` and no
@@ -430,11 +462,6 @@ not worth:
 **for a design that is no safer than the one whose failure modes prompted this
 whole item.** greenlet also still needs §6's typed façades, so it does not even
 save that work.
-
-This is the one place where the clean-context review changed a conclusion rather
-than a claim. The recommendation was Sans-I/O at the time; the review removed the
-argument for the alternative. (The later p4 prototype then displaced Sans-I/O
-itself — §10.)
 
 ---
 
@@ -453,9 +480,10 @@ prototype:
 No candidate had difficulty with either. Every one of them, p2b and p4
 included, passes the filesystem case because the per-mode part — a blocking
 `FileStore` for sync, `asyncio.to_thread` for async — lives in hand-written
-transports in `common.py`, outside the shared object layer. p2b is if anything
-*stricter* here: a Sans-I/O body cannot call `to_thread`, `gather` or `sleep` at
-all, only yield requests to a hand-written driver.
+transports in `common.py`, outside the shared object layer. In p2b this is
+enforced by construction: a Sans-I/O body cannot call `to_thread`, `gather` or
+`sleep` at all, only yield requests to a hand-written driver. In p4 it is a
+rule to keep, below.
 
 What is specific to p4 is narrower: `unasync` is a token rewrite, so anything in
 `_async/` must survive one. `test_unasync_is_a_token_rewrite` pins correct async
@@ -472,30 +500,53 @@ lines whose sync copies are wrong:
 | `-> Awaitable[int]`, `-> "list[AsyncTask]"` | unchanged — only whole-string forward references are renamed |
 | `await(self.save())` | `self.save())` — a syntax error: the token after `await` is dropped blindly |
 
-mypy over `_sync/` flags some of these (the dropped `sleep`), not all. So the
-rule for contributors is: no `asyncio`, no third-party `Async*` names, and no
-`await(...)` in `_async/` — anything else goes in the hand-written per-mode
-layer, as httpcore keeps its backends and `_synchronization.py` hand-written. A
-CI check for that rule would be short, but it has not been written.
+mypy over `_sync/` flags some of these (the dropped `sleep`), not all. So under
+p4 the rule for contributors is: no `asyncio`, no third-party `Async*` names,
+and no `await(...)` in `_async/` — anything else goes in the hand-written
+per-mode layer, as httpcore keeps its backends and `_synchronization.py`
+hand-written. A CI check for that rule would be short, but it has not been
+written.
 
 Two smaller consequences. `unasync` renames `AsyncTask` to `SyncTask`; if the
 public sync classes should be unprefixed (`Task`, as httpcore does it), each
 needs an entry in a replacement map. And comments and docstrings are not
 translated: the generated `buggy.py` still talks about a missing await.
 
-**Not probed, but plausible in p4's favour:** `async for` over an async
-generator becomes a plain `for` over a generator, so pagination exposed as an
-iterator should translate cleanly.
+Not probed for either design: pagination exposed as an iterator rather than a
+list (`async for` in p4; a generator-returning façade in p2b).
 
 ---
 
-## 10. Recommendation
+## 10. p2b and p4 compared
 
-Adopt **async-first source with a committed, `unasync`-generated sync copy**, and
-implement it as roadmap item 1.3. The author has accepted this. Codegen is still
-unattractive to the author, but fighting a Sans-I/O design for methods that make
-several round trips is less attractive still. It is chosen on ergonomics, in the
-knowledge that p2b catches the composition mistake more reliably (§5).
+What each would require of roadmap item 1.3:
+
+**p2b, generator Sans-I/O core with typed façades**
+
+1. The object layer is written once, as generator bodies (`_io_*`) that yield
+   `Request`s and compose with `yield from`. Object construction stays in the
+   core; a façade supplies only the classes to construct.
+2. Each object gets a sync and an async façade class. A façade method is a
+   `guard()` and one driver call, and carries the real signature. Async façade
+   methods are plain `def` returning a coroutine, so the guard runs at the call
+   site (§5).
+3. Under the core sits a **hand-written** per-mode layer — the transports, and
+   any thread, sleep or concurrency helper — because a body may only yield
+   requests (§9).
+4. Enforcement, each piece with a test that it fires:
+   - the runtime guard in every public entry point, exercised through a planted
+     specimen in both modes (`test_misuse_is_caught_in_both_modes`,
+     `test_facade_misuse_is_caught_in_both_modes`);
+   - a static check built properly from `check_ast.py` (*What is not settled*,
+     6), the only protection against a dropped `_io_` generator, run against
+     both planted shapes;
+   - a completeness test that every I/O body has both façades
+     (`test_every_io_body_has_both_facades`);
+   - mypy or pyright over the façades in CI, with §6's three cases as a test
+     that the checker catches a missing and a spurious `await` (not yet
+     written; the probes exist).
+
+**p4, async-first source with a generated sync copy**
 
 1. The object layer is written once, in `_async/`, as ordinary `async def` /
    `await` code with `Async*` class names.
@@ -504,9 +555,8 @@ knowledge that p2b catches the composition mistake more reliably (§5).
    dependency only.
 3. Under the generated layer sits a **hand-written** per-mode layer — the
    transports, and any thread, sleep or concurrency helper — because `unasync`
-   cannot translate those (§9). p2b would need the same layer.
-4. Enforcement — standard tools, but five of them, and each needs a test that it
-   fires:
+   cannot translate those (§9).
+4. Enforcement, each piece with a test that it fires:
    - pyright, or mypy with `check_untyped_defs`, over `_async/` *and* `_sync/`
      in CI (§5); plus ruff's F841 for the assigned-and-unused shape;
    - a test that the checker flags a committed specimen
@@ -517,69 +567,131 @@ knowledge that p2b catches the composition mistake more reliably (§5).
    - a check that `_async/` uses no `asyncio`, no third-party `Async*` names and
      no `await(...)` (§9; not yet written).
 
-   Dev-only tools must fail the build when missing in CI, not skip.
+For both, dev-only tools must fail the build when missing in CI, not skip.
 
-How it compares with p2b, axis by axis:
+Axis by axis:
 
 | | p2b Sans-I/O + façades | p4 unasync |
 |---|---|---|
-| Hand-written per I/O method (§7) | 17.4 lines, in two styles | **7.4 lines, plain async** |
+| The caldav slip, public name (§5) | raises at runtime, both modes | common shapes flagged by stock type checkers; at runtime only a warning |
+| A missing `yield from` / `await` (§5) | silent at runtime; project-written AST check, or pyright's opt-in, noisy `reportUnusedCallResult` | stock type checkers, common shapes; `RuntimeWarning`, which `-W error` turns into an async test failure |
+| caldav layer (*What is not settled*, 5) | unprotected until a typed shim exists | unprotected until a typed shim exists |
 | Public types (§6) | correct, via hand-written façades | correct, by construction |
-| The caldav slip (§5) | **raises at runtime, both modes, every shape** | common shapes flagged statically; runtime only a warning |
-| Enforcement to maintain | runtime guard, AST check, completeness test | type-checker config and test, freshness test, `-W error`, token-rule check |
+| Types inside method bodies | weak: the core is typed through `Any` | checked |
+| Hand-written per I/O method (§7) | 17.4 lines, in two styles | 7.4 lines, plain async |
+| Enforcement to maintain | runtime guard, AST check, completeness test, type check | type-checker config and test, freshness test, `-W error`, token-rule check |
 | Tracebacks (§8) | one driver frame extra in sync | as hand-written code, but in a generated file |
-| What a contributor must learn | generators, `yield from`, the guard | **async/await**, the token rule, and that `_sync/` is generated |
-| Non-HTTP backends (§9) | hand-written per-mode transports; bodies may only yield requests | hand-written per-mode transports; `_async/` must survive a token rewrite |
+| What a contributor must learn | generators, `yield from`, the guard, and which name to call | async/await, the token rule, and that `_sync/` is generated |
+| Non-HTTP backends (§9) | bodies may only yield requests | `_async/` must survive a token rewrite |
+| Build step | none | dev-time only; output committed |
 
-**p2b would be the better choice** if the project could not run a type checker
-as a hard CI gate, or if the slip shapes the checker misses (§5) turn out to be
-common in practice — for example if much of the object layer works on
-`Any`-typed or union-typed values, where p4's static check is blind.
+**The method bodies.** A method that makes several round trips is written the
+same way in both. `complete()` fetches, changes and saves:
 
-**The reviews, both of them.** Every one of p2b's enforcement mechanisms was
+```python
+# p4, _async/tasks.py
+async def complete(self) -> AsyncTask:
+    fresh = await self._collection.get_task(self.uid)
+    self.summary = fresh.summary
+    self.status = "COMPLETED"
+    await self.save()
+    return self
+
+# p2b, p2_typed.py
+def _io_complete(self) -> IO[Any]:
+    fresh = yield from self._coll._io_get_task(self.uid)
+    self.summary = fresh.summary
+    self.status = "COMPLETED"
+    yield from self._io_save()
+    return self
+```
+
+Calls also change name — `get_task` becomes `_io_get_task`, `save` becomes
+`_io_save` — and `search()`'s pagination loop has `yield Request(...)` where p4
+awaits the transport. Otherwise the bodies match. The differences in writing
+them are elsewhere:
+
+- **The façade layer.** p2b pays about 8.6 mechanical lines per I/O method,
+  roughly 490 at caldav's scale (§7). The completeness test keeps them honest,
+  but someone still writes and reviews them. p4 has none.
+- **Typed bodies.** In p4, `fresh` is an `AsyncTask` and a typo in
+  `fresh.summary` is a type error. In p2b, `fresh` is `Any`, because the shared
+  core is typed `IO[Any]` with `Any`-typed back references; the checker sees
+  the façades but not inside the bodies.
+- **Familiarity.** Every Python contributor knows `async`/`await`. Generators
+  that return values through `yield from`, and a rule about which name to call,
+  are rarer.
+- **What may appear in a body.** In p2b a body can only yield requests and
+  cannot `await`, so `asyncio`, a third-party async client or a sleep is
+  unusable there by construction; there is no allowed-name rule to keep. In p4
+  `_async/` must avoid `asyncio`, third-party `Async*` names and `await(...)`,
+  enforced by a check not yet written (§9).
+- **Names and generated code.** p4's `Async*` → `Sync*` rename needs a
+  replacement-map entry for every name that should not follow it — unprefixed
+  public classes, and every caldav name (*What is not settled*, 5). Its sync
+  tracebacks and breakpoints point into a file nobody wrote (§8). p2b has
+  neither.
+
+**What would tip it.**
+
+- Towards **p2b**: valuing a runtime check that the ordinary sync suite hits,
+  for the shape that caused caldav's bugs; a preference for no generated code
+  and no build step; and its open questions resolving well — if the shared core
+  can be typed (*What is not settled*, 1) and the façades generated (2), its two
+  main costs mostly go.
+- Towards **p4**: valuing plain `async`/`await` for contributors, fully typed
+  method bodies, and protection from stock, widely maintained tools rather than
+  a project-written AST check; being willing to make a type checker a hard CI
+  gate and to keep `_async/` within what a token rewrite can translate; and its
+  open questions resolving well — `unasync` itself or a vendored equivalent
+  (7), and the replacement map the caldav names need (5).
+
+**What the reviews taught.** Every one of p2b's enforcement mechanisms was
 broken in its first draft — the guard did not cover the façades, the static
 check both missed the real mistake and rejected the design it protected, and
 the completeness test did not exist while the document claimed it did. p4's
 first draft repeated the pattern: its type-checker enforcement was printed but
-not tested, its freshness test missed orphaned and nested files and skipped
-silently without `unasync`, and this section claimed "one freshness test" and
-a win on four of five axes. A clean-context review found all of that, and the
-fixes are in the prototypes and in the text above. The lesson stands: whatever
-1.3 builds, its enforcement needs tests written by someone who did not write the
-enforcement.
+not tested, and its freshness test missed orphaned and nested files and skipped
+silently without `unasync`. A clean-context review found all of that, and the
+fixes are in the prototypes and in the text above. The lesson holds for either
+choice: whatever 1.3 builds, its enforcement needs tests written by someone who
+did not write the enforcement.
 
 ### What is not settled
 
-1. **`unasync` itself.** It is a token rewrite that imports `setuptools`;
-   httpcore uses a short script of its own instead.
-   1.3 should decide between depending on it and vendoring an equivalent —
-   either works with the committed-output arrangement.
-2. **Cancellation and timeouts** were not tested for any candidate. For p4 they
-   are plain asyncio semantics; for p2b a driver cancelled mid-pagination must
-   not leave a half-consumed generator in a bad state.
-3. **Threading.** Not tested. p4 has no per-thread state; p2b's `_IN_DRIVER` is
-   a `ContextVar`, correct per-task and per-thread, but untested with a driver
-   that hands work to a thread pool.
-4. **The caldav bridge** (roadmap 2.1) is the real test, and p4 does **not**
-   make it easier. caldav's async names are aliases of its dual-mode classes
-   (`AsyncTodo = Todo` in `caldav/aio.py`), whose methods return
-   `Self | Coroutine`. The review wrote a p4-style backend against
-   `caldav.aio` and found:
+1. **Typing the core (p2b).** Typed bodies work for a single class: `p2_sansio.py`
+   types its bodies as `IO["BoundTask"]`. The open question is a core shared by
+   two façade classes. `p2_typed.py` types it `IO[Any]`, with `_coll: Any`, so
+   `fresh` in `_io_complete` is `Any`. 1.3 should try making the core generic
+   over the task class (or `Self`) with typed back references before accepting
+   that.
+2. **Generating the façades (p2b).** They are mechanical: a guard and a driver call.
+   Whether a decorator or a small generator can produce them without losing
+   their signatures is untested. If it can, most of §7's size difference goes.
+3. **Cancellation and timeouts** were not tested for any candidate. For p2b a
+   driver cancelled mid-pagination must not leave a half-consumed generator in
+   a bad state; for p4 they are plain asyncio semantics.
+4. **Threading.** Not tested. p2b's `_IN_DRIVER` is a `ContextVar`, correct
+   per-task and per-thread, but untested with a driver that hands work to a
+   thread pool. p4 has no per-thread state.
+5. **The caldav bridge** (roadmap 2.1) is the real test. caldav's async names
+   are aliases of its dual-mode classes (`AsyncTodo = Todo` in
+   `caldav/aio.py`), whose methods return `Self | Coroutine`. A p4-style
+   backend written against `caldav.aio` showed what that means:
    - mypy and pyright both reject the *correct* `await cal.save_todo(...)`
      (`Todo | Coroutine` is not awaitable), and both miss two planted missing
      awaits — p1's typing, false positives included;
    - `unasync` turns the imports into `SyncDAVClient`, `SyncCalendar` and
-     `SyncTodo`, none of which exist, so every caldav name needs a replacement
-     map entry (as does `get_async_davclient`);
-   - so §5's static protection does not reach this layer, and `-W error` async
-     tests are its only net.
+     `SyncTodo`, none of which exist, so every caldav name would need a
+     replacement map entry (as does `get_async_davclient`).
 
-   2.1 should plan a thin, honestly typed shim over caldav — separate sync and
-   async wrappers, or a `cast` at every call — so that the generated layer
-   above it sees real types. That work is the same whichever design 1.3
-   builds; it was underestimated in an earlier revision of this item.
-5. **If p2b is chosen instead: `check_ast.py` is a prototype, not the gate 1.3
-   needs.** The suite runs
+   In p2b the caldav calls sit in the hand-written per-mode layer under the
+   drivers, outside the bodies, where the guard does not run either. So a
+   missing `await` in that layer is unprotected in **both** designs until it
+   has a thin, honestly typed shim over caldav — separate sync and async
+   wrappers, or a `cast` at every call. With the shim, p4's static check would
+   reach it too. That work is the same whichever design 1.3 builds.
+6. **`check_ast.py` is a prototype, not the gate 1.3 needs (p2b).** The suite runs
    it (`test_static_check_passes_the_real_modules_and_catches_the_specimen`),
    but a review found three holes, each confirmed with a probe: it only knows
    public names whose `_io_*` body is in the same file, so a call into another
@@ -588,15 +700,20 @@ enforcement.
    `g = self.save(); yield from g` as delegation. 1.3's check must match on
    `self` and known receivers, resolve names across modules or from a registry,
    and not exempt an assignment of a public call.
+7. **`unasync` itself (p4).** It is a token rewrite that imports `setuptools`;
+   httpcore uses a short script of its own instead. 1.3 would decide between
+   depending on it and vendoring an equivalent — either works with the
+   committed-output arrangement.
 
 ---
 
-*Drafted with AI assistance (Claude Opus 5 via Claude Code), then revised after a
-clean-context review that overturned one conclusion (§8) and found the
-enforcement mechanisms broken in three separate ways (§10), and revised again
-after the `unasync` prototype (p4) changed the recommendation, and revised a
-third time after a clean-context review of p4 found its enforcement untested,
-its freshness test leaky, the caldav-bridge claim wrong and the axis count
-inflated (§10). Every number and every fenced output block is
-reproducible from `prototypes/sync_async/`; the prototypes are the deliverable
-as much as this document is.*
+## 11. Decision
+
+*To be written by the author.*
+
+---
+
+*Drafted with AI assistance (Claude Opus 5 and 5.5 via Claude Code) and revised
+after clean-context reviews. Every number and every fenced output block
+is reproducible from `prototypes/sync_async/`; the prototypes are the
+deliverable as much as this document is.*

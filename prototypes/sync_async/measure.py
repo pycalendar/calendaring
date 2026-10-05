@@ -210,7 +210,7 @@ def scaling_table() -> None:
     for label, total, fixed, per, ops in rows:
         print(f"    {label:24} ~{int(fixed + 57 * per):5} lines")
     print()
-    print("  NOTE: lines of code are NOT the argument for the recommendation.")
+    print("  NOTE: lines of code are NOT the argument for either design.")
     print("  p2b is the largest at scale: typed facades are paid per method.  p1")
     print("  buys its footprint by making every composite method a latent bug;")
     print("  p4 by writing in the one style a token rewrite can translate.")
