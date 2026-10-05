@@ -75,10 +75,38 @@ latest you can start and still finish by `DUE`, given that this task gets full p
 
 **That convention is now in conflict with an emerging standard.** See 1.2.
 
+#### What do `DTSTART`, `DUE` and `DURATION` mean on a task?
+
+RFC 5545 does not define them well. The only thing beyond doubt is that, given
+`DTSTART`, `DURATION` is an alternative to `DUE`: an implicit
+`DUE = DTSTART + DURATION`, or an implicit `DURATION = DUE - DTSTART`. That still
+leaves several readings, each with its own problem:
+
+| `DTSTART` | `DUE` | `DURATION` | Problem |
+|---|---|---|---|
+| Earliest time it makes sense to start | Deadline | The window in which to consider working on it | `DTSTART` is vague, and may have to move earlier depending on how many other tasks are on hand |
+| Planned start | Deadline | Planned start to deadline — not the time available, as other events, tasks and non-calendar things (bedtime) compete for it | `DURATION` means little |
+| Actual start | Deadline | Actual start to deadline; negative for overdue work | Breaks recurring tasks |
+| Latest possible start, considering competing tasks | Deadline | Estimate plus slack plus competing tasks' estimates | `DURATION` means little; `DTSTART` is a computed value depending on the rest of the calendar |
+| Latest possible start, were this the only thing on the calendar (plann) | Deadline | The time estimate | `DTSTART` is destroyed as a meaningful value |
+| Start of a time slot reserved for the task | End of that time slot | The time estimate | The deadline is lost, and the timestamps need moving whenever the slot is spent on more important things |
+
+`DUE` can only be one of two things: the deadline (hard, soft, or wishful thinking),
+or the end of a time slot reserved for the task — and in the latter case `DTSTART`
+can only be the planned start. RFC 5545 defines `DUE` as "the date and time that a
+to-do is expected to be completed", which can be read either way. This survey, and
+plann's design notes, read it as the deadline; plann pins a task to the calendar
+with a separate `VEVENT` linked through `RELATED-TO` instead of moving the task's
+own timestamps.
+
+The tasks draft (1.2) settles on the first reading. That was also plann's original
+idea for `DTSTART`; it was abandoned only because the estimate needed somewhere to
+live, which `ESTIMATED-DURATION` now provides.
+
 ### 1.2 The task extensions draft — the estimate gap is closing
 
 [`draft-ietf-calext-ical-tasks-17`](https://datatracker.ietf.org/doc/draft-ietf-calext-ical-tasks/)
-("Task Extensions to iCalendar", Apthorp & Douglass, 10 December 2025) is a Proposed Standard updating RFC 5545. It seems very likely that this will be released as an RFC within monthes.  It's mostly focusing on workflows involving multiple users.  It adds granularity to task statuses, and it introduces a new property `ESTIMATED-DURATION`, which closes the estimate half of the README's gap.
+("Task Extensions to iCalendar", Apthorp & Douglass, 10 December 2025) is a Proposed Standard updating RFC 5545. It seems very likely that this will be released as an RFC within months.  It's mostly focusing on workflows involving multiple users.  It adds granularity to task statuses, and it introduces a new property `ESTIMATED-DURATION`, which closes the estimate half of the README's gap.
 
 `ESTIMATED-DURATION` is the estimate, and `DTSTART` - `DUE` is the *window* a task may be performed in.  The model in plann is to use `DURATION` as the estimate, and derive `DTSTART` from it.
 
