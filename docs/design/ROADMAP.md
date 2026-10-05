@@ -146,6 +146,11 @@ give a single source of truth with no build step, and generator-based Sans-I/O i
 the one that matches the instinct behind this item. The research must still be
 allowed to reach a different conclusion.
 
+It did. The author still finds "write async, generate sync" unattractive, but
+fighting a Sans-I/O design for methods that make several round trips is less
+attractive still, and the prototypes favoured codegen; see
+[the comparison](SYNC_ASYNC_ARCHITECTURE.md#10-recommendation).
+
 **Note:** We should in general be careful relying too much on the
 AI-generated code and documentation, but GenAI is great for rapid
 prototyping.
@@ -250,6 +255,8 @@ and it is what makes each later backend cheap to add.
 - **Deliverable:** the chosen architecture, implemented and enforced
 
 **Tasks:**
+- [ ] Before implementing: a clean-context review of 0.2's `unasync` prototype
+      (p4) and the claims the recommendation rests on
 - [ ] Implement 0.2's recommendation as reusable scaffolding
 - [ ] Ensure the public type signatures are correct under mypy in **both** modes —
       the caldav failure was annotations that lie
