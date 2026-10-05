@@ -937,8 +937,11 @@ distinguishing "work done" from "planned meeting" (see 4.4). It maps
 **one-to-one onto Vikunja's `TimeEntry` and org-mode's `CLOCK:` lines**, the two
 systems the survey found had already solved this.
 
-The "server-side date-range search" column is about a question like "how many
-hours did I work last week, on anything?". With D, each entry is a `VEVENT` with
+Time-stamped entries are what make "how much time did I spend on tasks last
+week?" answerable at all: a scalar total only says that a task which has run
+for several weeks has taken 16 hours so far. Every option except B keeps
+entries; the "server-side date-range search" column is about who does the
+filtering when asking that question. With D, each entry is a `VEVENT` with
 its own `DTSTART`/`DTEND`, so a CalDAV `calendar-query` with a time-range filter
 makes the server return just that week's entries, and the client sums them.
 With B, C and E the entries are hidden inside the `VTODO` (or a component the
