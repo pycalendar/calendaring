@@ -124,17 +124,17 @@ fifteen-year-old codebase is precisely the open question.
 | `greenlet` bridging (SQLAlchemy pattern) | Yes | No | Adds a C dependency; tracebacks are hard to follow |
 
 **Tasks:**
-- [ ] Write up each candidate with its cost model
-- [ ] Prototype the two or three most promising against a toy two-method backend
-- [ ] Measure, for each prototype: implementation LoC, test LoC, whether one test
+- [x] Write up each candidate with its cost model
+- [x] Prototype the two or three most promising against a toy two-method backend
+- [x] Measure, for each prototype: implementation LoC, test LoC, whether one test
       suite can drive both modes, mypy/pyright correctness of the public signatures,
       traceback quality when a backend raises mid-operation
-- [ ] Answer explicitly: can the *object* layer be Sans-I/O without an ugly public
+- [x] Answer explicitly: can the *object* layer be Sans-I/O without an ugly public
       API? A caller must be able to write `event.save()` or `await event.save()`,
       not `client.execute(event.build_save_request())`
-- [ ] Check how the chosen approach survives an HTTP-paginated backend (issue
+- [x] Check how the chosen approach survives an HTTP-paginated backend (issue
       trackers) and a filesystem backend, not only a single-request-per-call one
-- [ ] Publish the comparison and the recommendation
+- [x] Publish the comparison and the recommendation
 
 **Explicitly rejected without further study:** wrapping async in `asyncio.run()` for
 the sync path. Nested event loops are forbidden and it cannot be called from an
