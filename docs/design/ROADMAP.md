@@ -135,7 +135,7 @@ fifteen-year-old codebase is precisely the open question.
 - [x] Check how the chosen approach survives an HTTP-paginated backend (issue
       trackers) and a filesystem backend, not only a single-request-per-call one
 - [x] Publish the comparison
-- [ ] The author's decision, recorded in the comparison's last section
+- [x] The author's decision, recorded in the comparison's last section
 
 **Explicitly rejected without further study:** wrapping async in `asyncio.run()` for
 the sync path. Nested event loops are forbidden and it cannot be called from an
@@ -152,6 +152,9 @@ hold up — generator-based Sans-I/O with typed façades (p2b) and async-first
 source with a generated sync copy (p4) — and the prototypes do not settle which
 serves the project better. The comparison sets out the trade without
 recommending one; see [§10 of the comparison](SYNC_ASYNC_ARCHITECTURE.md#10-p2b-and-p4-compared).
+The author chose p4, for its aesthetics and debuggability, despite the
+reservation about generated code noted above; see
+[§11](SYNC_ASYNC_ARCHITECTURE.md#11-decision).
 
 **Note:** We should in general be careful relying too much on the
 AI-generated code and documentation, but GenAI is great for rapid
@@ -259,23 +262,18 @@ and it is what makes each later backend cheap to add.
 **Tasks:**
 - [x] Before implementing: a clean-context review of 0.2's `unasync` prototype
       (p4) and the claims made for it
-- [ ] Implement the design chosen in 0.2 as reusable scaffolding, with per-mode
-      code in a hand-written layer underneath. Depending on the choice:
-  - **p2b:** the generator core, the sync and async drivers, the guard and the
-    façade pattern. Try typing the shared core (`IO[T]`, typed back
-    references) rather than `IO[Any]`, and try generating the façades. Build
-    the static composition check properly from `check_ast.py` — match on
-    `self` and known receivers, resolve names across modules, do not exempt an
-    assigned public call — and gate CI on it: the runtime guard is blind to a
-    missing `yield from`, so this check is its main protection (pyright's
-    noisy `reportUnusedCallResult` is the other). Keep the completeness test
-    and the guard tests.
-  - **p4:** a recursive generator that deletes orphans, and a freshness test
-    that compares file sets as well as contents. Gate CI on pyright, or mypy
-    with `check_untyped_defs`, over both copies, plus ruff F841, with a test
-    that the checker flags a committed specimen, and run the conformance suite
-    under `-W error`. Check that `_async/` contains nothing a token rewrite
-    breaks (`asyncio`, third-party `Async*` names, `await(...)`).
+- [ ] Implement 0.2's decision (p4) as reusable scaffolding: async-first
+      source in `_async/`, a recursive generator that writes `_sync/` and
+      deletes orphans, and a freshness test that compares file sets as well
+      as contents; per-mode code in a hand-written layer underneath
+- [ ] Decide between depending on `unasync` and vendoring an equivalent
+- [ ] Maintain the generator's replacement map for names that must not follow
+      the `Async*` → `Sync*` rename, such as unprefixed public sync classes
+- [ ] Gate CI on pyright, or mypy with `check_untyped_defs`, over both copies,
+      plus ruff F841, with a test that the checker flags a committed specimen;
+      run the conformance suite under `-W error`
+- [ ] Check that `_async/` contains nothing a token rewrite breaks (`asyncio`,
+      third-party `Async*` names, `await(...)`)
 - [ ] Make dev-only tools fail the build when missing in CI rather than skip
 - [ ] Ensure the public type signatures are correct under mypy in **both** modes —
       the caldav failure was annotations that lie — and gate CI on a test that
@@ -340,10 +338,12 @@ disagree.
 - [ ] Map the unified API onto `caldav` 3.x
 - [ ] Map caldav's compatibility-hint/quirk system onto the capability declaration
 - [ ] Handle the sync/async impedance between caldav's dual-mode design and
-      whatever 1.3 chose — this is the interesting part, and the part most likely
+      p4 as 1.3 builds it — this is the interesting part, and the part most likely
       to overrun. caldav's `Async*` names are aliases of its dual-mode classes,
       so a thin, honestly typed shim is needed for type checking to work in
-      this layer at all (see 0.2's comparison, *What is not settled*)
+      this layer at all (see 0.2's comparison, *What is not settled*), and
+      every caldav name needs a replacement-map entry so the generated sync
+      layer imports names that exist (`SyncDAVClient` does not)
 - [ ] Pass the conformance suite
 - [ ] Record, do not silently fix, bugs found in `caldav` itself: those fixes are
       caldav's budget, not this project's
