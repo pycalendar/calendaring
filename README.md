@@ -1,6 +1,8 @@
 # A Calendaring and Task Client
 
-The name of the library is not yet set in stone.  I thought of "calendar-client" and "calendaring-client", but I find it important with a name that makes it intuitive that it supports tasks and not only events.
+*One Python API for calendars and task lists: CalDAV, JMAP, iCalendar feeds, local files and issue trackers.*
+
+The name of the library is not yet set in stone: it is either `calendaring-client` or `calendaring`, and the same name on GitHub, PyPI and as the import (see [the 0.3 decisions](docs/design/PRIOR_ART_AND_DECISIONS.md#d2-the-name)).  "Calendaring" is the IETF's word, and in RFC 5545 it covers tasks too, but few people know that, so the tagline above carries the message that this library supports tasks and not only events.
 
 ## Background
 

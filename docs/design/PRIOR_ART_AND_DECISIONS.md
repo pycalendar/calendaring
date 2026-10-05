@@ -3,9 +3,8 @@
 **Roadmap item:** [0.3 Prior art, standards and project decisions](ROADMAP.md#03-prior-art-standards-and-project-decisions)
 **Status:** drafted by Claude Opus 5.5 on 2026-09-24, updated on 2026-10-05
 for 0.2's decision (p4) and re-checked against `caldav` and `calendaring-jmap`
-— awaiting the author's review.
-Every "decision" below is a *proposal*; none of them is settled until the author
-says so.
+— and reviewed by the author on 2026-10-05. D1, D3–D7 are now decisions; D2,
+the name, is still open.
 **Deliverable:** this document
 
 **Findings that need attention before anything else:**
@@ -13,7 +12,8 @@ says so.
 1. **Licensing.** This repository has no `LICENSE` file. Two of its intended
    dependencies, `icalendar-searcher` and `calendaring-jmap`, are
    **AGPL-3.0-or-later**, and `caldav` — dual-licensed GPL-3.0-or-later *or*
-   Apache-2.0 — has a hard dependency on `icalendar-searcher`. See [D3](#d3-licence).
+   Apache-2.0 — has a hard dependency on `icalendar-searcher`. Decided: dual
+   licence, with JMAP optional. See [D3](#d3-licence).
 2. **The name is already public.** [pycal.org](https://pycal.org) lists
    `calendaring-client` as a planned package, next to the sibling
    `calendaring-jmap` (on PyPI, 1.1.0) and an empty `calendaring-sync` repo. A
@@ -184,7 +184,8 @@ prior art:
   below meets it.
 
 **Proposal:** make the outreach concrete (4.4 already names HA as a
-reviewer source). Offer to
+reviewer source). *Author, 2026-10-05: not yet — the code-ownership offer waits
+until the author uses Home Assistant.* Offer to
 become code owner of HA's `caldav` integration, which currently has none, and to
 move it onto this library once 2.1 passes the conformance suite. A single
 `calendaring` integration covering CalDAV, feeds and local files would overlap
@@ -337,6 +338,8 @@ JMAP, iCalendar feeds, local files and issue trackers."* A name that tries to
 say "events and tasks and trackers" gets long (`calendaring-and-tasks`) or
 vague (`pim-client`, which also suggests contacts). The family prefix is
 worth more than the signal.
+The tagline is now in place on GitHub and in the README; pycal.org still has the
+old one.
 
 **Also: register `calendaring` too**, as a placeholder or as the import name. A
 bare `calendaring` would otherwise be free for anyone to squat on, next to
@@ -346,6 +349,35 @@ three packages that share the prefix. Whether the import name is
 
 **Rejected alternatives:** `calendar-client` is too close to "Google Calendar
 client" in search results and not in the family. `pim-*` promises contacts.
+
+**`calendaring` on PyPI and `calendaring-client` on GitHub?** The author asked
+this in review. Splitting the names is the one option that is clearly worse:
+
+- A distribution name that differs from the repository and the import name is
+  a known source of friction (`beautifulsoup4` / `bs4`). People search GitHub
+  for what they `pip install`, and issue reports name whichever they saw.
+- The family is consistent today: `calendaring-jmap` is the same name on
+  GitHub, on PyPI and, with an underscore, as the import.
+- What `calendaring` on PyPI implies, the import name has to follow, so the
+  real choice is between two consistent sets, not between a PyPI name and a
+  repository name.
+
+`calendaring` *everywhere* is a different matter, and has real merit. This
+package is the family's front door, the one an application developer installs,
+and the other `calendaring-*` packages sit behind it as backends or extras:
+`pip install calendaring[jmap]` reads well. It also settles the squatting
+worry without a placeholder upload, which PEP 541 treats as reclaimable
+anyway. The costs are small but not zero: renaming the GitHub repository
+(GitHub redirects the old URLs, open PRs included), pycal.org, the README and
+roadmap, and the NLnet paperwork that says `calendaring-client`. And a bare
+`calendaring` import rules out ever making `calendaring.*` a namespace for
+the family, which nobody has proposed: `calendaring_jmap` already uses an
+underscore.
+
+**Conclusion:** do not split. Either keep `calendaring-client` everywhere, which
+costs nothing, or move to `calendaring` everywhere before the first upload (1.5),
+which costs a rename now and buys a shorter front-door name. This is still the
+author's call.
 
 ### D3. Licence
 
@@ -378,9 +410,24 @@ Two observations:
 - **GPL-3.0-or-later OR Apache-2.0**, like `caldav`. This only means something
   if `icalendar-searcher` is relicensed or made optional.
 
-**Recommendation:** decide `icalendar-searcher`'s licence first (it is the
-author's own package), then license this package to match `caldav`. Add a
-`LICENSE` file before any code lands.
+**Decision (author, 2026-10-05): GPL-3.0-or-later OR Apache-2.0**, like
+`caldav`. The author is relicensing `icalendar-searcher` to match (a pull
+request is open there), which also makes `caldav`'s Apache option real.
+
+Consequences:
+- `calendaring-jmap` stays AGPL, so it must be an **optional dependency**, an
+  extra such as `calendaring-client[jmap]`, never a hard one. 2.4 builds the
+  backend behind that extra, and a test should check that the package imports
+  without it.
+- **A program that includes the JMAP extra must, as a whole, be conveyed under
+  AGPL-3.0 terms**, so the Apache-2.0 option is gone for that combined work.
+  This library's own code stays available under either licence; merely
+  installing the extra triggers nothing. That has to be said where a user will
+  see it before choosing: in the README, in the JMAP backend's documentation
+  (2.4, 4.1), and in the capability matrix (4.3).
+- Add the licence files (`caldav` uses `COPYING.GPL` and `COPYING.APACHE` with
+  `license-files`) before code lands. The repository already carries the 0.2
+  prototypes with no licence, so this is not hypothetical; 1.5 owns it.
 
 ### D4. Python version floor
 
@@ -414,12 +461,15 @@ checklist) defaults to `>=3.10` with a 3.10–3.14 CI matrix, and says a higher
 floor needs a reason and the author's agreement. The reasons are above, and the
 agreement was given:
 
+**Decision (author, 2026-10-05): `>=3.11`.** `plann` has to raise its floor
+eventually, at the latest when 3.3 makes it depend on this library.
+
 ### D5. Typing strictness
 
 The failure that motivated 0.2 was "annotations that lie", so typing here is
 correctness, not style.
 
-**Proposal:**
+**Decision (author, 2026-10-05), as proposed:**
 - Ship `py.typed`.
 - `mypy --strict` over the package, **gating in CI**.
 - `pyright --verifytypes calendaring_client` at **100 % type completeness of
@@ -446,7 +496,8 @@ correctness, not style.
 *Not on the roadmap's list, but the standards review arrives at it, and 1.1
 needs it as input.*
 
-**Proposal: iCalendar, as `icalendar` library objects, is the canonical model.**
+**Decision (author, 2026-10-05): iCalendar, as `icalendar` library objects, is
+the canonical model.**
 Backends that do not speak iCalendar convert at their boundary: JMAP (via
 `calendaring-jmap`'s converters), issue trackers, and later org mode.
 
@@ -465,6 +516,14 @@ typed view *over* the iCalendar component, not a separate model with its own
 storage. That keeps round-tripping lossless, which Home Assistant's two-status
 `TodoItem` (§1.4) shows is the thing a thin model loses first.
 
+The author's view is that `icalendar` is good enough, with one condition: the
+[0.1 survey](TASK_MODEL_SURVEY.md) proposes fields that RFC 5545 has no
+property for, extra timestamps among them. Those are stored as `X-`
+properties. The order of preference, for 1.1 to apply field by field: an
+RFC 5545 property; then one from RFC 9253 or the ical-tasks draft (Part 2);
+then an `X-` property, under one documented prefix, so that a later standard
+property can replace it without guessing.
+
 ### D7. Tooling conventions
 
 *Not on 0.3's list either, but 1.5 says "matching the sibling projects", and the
@@ -480,13 +539,13 @@ siblings do not match each other.*
 | HTTP | niquests preferred | niquests (httpx optional) | niquests |
 | Other | ruff, pre-commit, lychee, conventional commits, `filterwarnings = ["error"]`, trusted publishing | ruff, pre-commit, lychee, conventional commits | ruff, pre-commit, REUSE, zizmor |
 
-**Proposal for 1.5:** the author's template as the baseline. It is what the
-single maintainer works with every day, and its `filterwarnings = ["error"]` is
-what 1.3 already demands (`-W error`). Two things to take from
-`calendaring-jmap` on top: Sphinx on Read the Docs, since 4.1 needs a doc site
-anyway and both siblings use Sphinx; and REUSE, if D3 ends at AGPL, which
-makes the licence of every file explicit at little cost. towncrier is not worth
-it for a one-maintainer project.
+**Decision for 1.5 (author, 2026-10-05):** the author's template as the
+baseline, but with **towncrier** instead of Keep a Changelog, as the pycalendar
+organisation's standard. The template's `filterwarnings = ["error"]` is what
+1.3 already demands (`-W error`). Also from `calendaring-jmap`: Sphinx on Read
+the Docs, since 4.1 needs a doc site anyway and both siblings use Sphinx.
+REUSE is still a proposal: with a dual licence it states the `OR` in every
+file, at little cost.
 
 The template's warning against the PEP 639 licence string is about pip 22 on
 Ubuntu 22.04, whose system Python is 3.10. With D4's floor of 3.11 those users
@@ -498,20 +557,18 @@ caller-owned session that §1.4 asks for.
 
 ---
 
-## Open questions for the author
+## Questions for the author, and the answers
 
-1. **Licence** (D3): is `icalendar-searcher`'s AGPL deliberate, and does it
-   stay? This decides this package's licence.
-2. **Name** (D2): keep `calendaring-client`? Register `calendaring` as well?
-   Import name `calendaring_client` or `calendaring`?
-3. **Python floor** (D4): 3.11, accepting that plann has to follow?
-4. **Home Assistant** (§1.4): should the outreach offer code ownership of the
-   `caldav` integration? That is a maintenance commitment beyond the grant.
-5. **D6**: does "iCalendar is the model, everything else converts" agree with
-   the task model proposed in the [0.1 survey](TASK_MODEL_SURVEY.md) Part 4?
-   It should, but that is the author's call.
-6. **Tooling** (D7): the personal template plus Sphinx and REUSE, without
-   towncrier?
+1. **Licence** (D3): dual GPL-3.0-or-later OR Apache-2.0, with
+   `icalendar-searcher` relicensed and JMAP optional.
+2. **Name** (D2): **open.** `calendaring-client` everywhere, or `calendaring`
+   everywhere; not split.
+3. **Python floor** (D4): 3.11.
+4. **Home Assistant** (§1.4): no code-ownership offer for now. The author is
+   considering Home Assistant for personal use, and will reconsider then.
+5. **D6**: iCalendar, with `X-` properties for what the 0.1 task model needs
+   and no standard covers.
+6. **Tooling** (D7): the template, with towncrier, plus Sphinx.
 
 ---
 

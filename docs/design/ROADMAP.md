@@ -175,7 +175,8 @@ prototyping.
 - **Dependencies:** none
 
 **Tasks:**
-- [ ] **Settle the name.** Proposal: keep `calendaring-client` (D2).
+- [ ] **Settle the name.** Still open: `calendaring-client` or `calendaring`,
+      the same on GitHub, PyPI and as the import name (D2).
       "calendar-client" and "calendaring-client" both fail to
       signal task support. Decide before the first PyPI upload; a rename afterwards
       is expensive. Check PyPI availability.
@@ -198,9 +199,8 @@ prototyping.
 - [x] Standards review: RFC 5545 (iCalendar), RFC 5546 (iTIP), RFC 7265 (jCal),
       RFC 9253 (relationships), JMAP Calendars (RFC 8984 / JSCalendar), ActivityPub,
       org-mode. Record which are in scope for the funded period.
-- [ ] Record a Python version support floor and a typing strictness policy.
-      Proposals: `>=3.11` (D4), `mypy --strict` plus `pyright --verifytypes`
-      (D5)
+- [x] Record a Python version support floor and a typing strictness policy:
+      `>=3.11` (D4), `mypy --strict` plus `pyright --verifytypes` (D5)
 
 ---
 
@@ -230,7 +230,8 @@ CalDAV *and* a Gitea issue tracker without lying about either".
       counters, or nothing)
 - [ ] Define the escape hatch: how a caller reaches backend-specific functionality
       without the abstraction pretending it does not exist
-- [ ] Incorporate the task model from 0.1
+- [ ] Incorporate the task model from 0.1; fields with no standard property
+      are stored as `X-` properties (0.3, D6)
 - [ ] Peer review, and revise. Identify and approach reviewers early — a review
       is a dependency on someone else's calendar, not a quantity of work.
 
@@ -328,7 +329,8 @@ Modest, because the author has an established pattern to copy from
 - [ ] ruff and pre-commit, matching the sibling projects
 - [ ] CI matrix across supported Python versions
 - [ ] PyPI publishing workflow
-- [ ] LICENSE, SECURITY.md, CHANGELOG
+- [ ] Licence files for GPL-3.0-or-later OR Apache-2.0 (0.3, D3), SECURITY.md,
+      a towncrier changelog (0.3, D7)
 
 ---
 
@@ -465,7 +467,9 @@ dominated by model mapping and conformance work rather than by how clean the
 wrapped API turns out to be.
 
 **Tasks:**
-- [ ] Wrap `calendaring-jmap` behind the unified API
+- [ ] Wrap `calendaring-jmap` behind the unified API, as an optional extra:
+      it is AGPL, so a program that includes it must be conveyed under AGPL
+      terms as a whole, which the docs must say (0.3, D3)
 - [ ] Map JSCalendar objects to the unified model
 - [ ] Pass the conformance suite against Stalwart
 - [ ] Verify Cyrus's JMAP calendar coverage before promising compliance against it;
