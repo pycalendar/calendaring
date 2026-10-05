@@ -9,20 +9,11 @@
 typed façades — one implementation of every I/O method, two hand-thin classes
 that carry the correct type signatures.
 
-**Revised after review.** An earlier draft of this document made `greenlet` the
-runner-up on the grounds that it makes the composition mistake *structurally
-impossible*. A clean-context review showed that claim was false — see
-[§8](#8-greenlet-no-longer-competitive) — which removes greenlet's only
-advantage and leaves the untested codegen option ([§3](#3-the-candidates)) as
-the nearest alternative rather than a close second.
-
 ---
 
 ## 1. Method
 
-Everything below is measured from code that runs, not reasoned about in the
-abstract. Three architectures are implemented against the *same* toy backend and
-driven by the *same* test suite:
+Everything below has been prototyped and tested; three architectures are implemented against the *same* toy backend and driven by the *same* test suite:
 
 | File | What it is |
 |---|---|
