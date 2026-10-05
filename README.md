@@ -22,7 +22,7 @@ Critically, it has **zero VTODO/task support** — it is built entirely around `
 
 The interface is a CLI (interactive REPL + subcommands for agenda/week/month views, CRUD, search).  It is not designed as a library API.
 
-The project is actively maintained (last release 1.1.3 in December 2024).
+The project is actively maintained (last release 1.1.6; last commit 2026-09-10).
 
 **Conclusion:** icalcli and this project are complementary rather than competing.  icalcli is a user-facing CLI tool for viewing and editing calendar *events* from local files; this project aims to be a multi-backend *library* with first-class task support.  The pluggable backend design in icalcli is worth studying for inspiration.
 

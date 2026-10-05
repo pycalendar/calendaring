@@ -1,7 +1,9 @@
 # Prior art, standards and project decisions
 
 **Roadmap item:** [0.3 Prior art, standards and project decisions](ROADMAP.md#03-prior-art-standards-and-project-decisions)
-**Status:** drafted by Claude Opus 5.5 on 2026-09-24 — awaiting the author's review.
+**Status:** drafted by Claude Opus 5.5 on 2026-09-24, updated on 2026-10-05
+for 0.2's decision (p4) and re-checked against `caldav` and `calendaring-jmap`
+— awaiting the author's review.
 Every "decision" below is a *proposal*; none of them is settled until the author
 says so.
 **Deliverable:** this document
@@ -168,12 +170,16 @@ prior art:
 (`script/hassfest/quality_scale.py`). All three rules are Platinum tier:
 
 - `async-dependency` — the library must be async. HA's `caldav` integration
-  wraps every call in `async_add_executor_job`. The 0.2 recommendation provides
-  native async.
+  wraps every call in `async_add_executor_job`. 0.2's decision, async-first
+  source with a generated sync copy (p4), provides native async.
 - `inject-websession` — the library must accept an HTTP session that HA owns
-  (aiohttp). **This is a concrete requirement for 1.3:** the async driver must
-  be pluggable, and one driver should be aiohttp-backed. The Sans-I/O design
-  makes that cheap, but it has to be in the design from the start.
+  (aiohttp). For backends that do their own HTTP (2.3, the feed backend) this
+  is a requirement on 1.3's hand-written per-mode layer: it must accept a
+  caller-owned session. For the backends that wrap another library it is not
+  this library's to meet. Neither `caldav`'s `AsyncDAVClient` nor
+  `calendaring-jmap`'s `AsyncJMAPClient` accepts a session today (both create
+  their own, with niquests or httpx), and neither supports aiohttp. That is
+  an issue to raise with both projects, early.
 - `strict-typing` — the library must ship `py.typed` with complete types. D5
   below meets it.
 
@@ -192,11 +198,14 @@ not presented as a finished replacement.
 (AGPL-3.0-or-later, 1.1.0, `>=3.10`, niquests) is the separately funded JMAP
 package that 2.4 will wrap. Its shape:
 
-- **Separate sync and async classes**: `JMAPClient` (810 lines) and
-  `AsyncJMAPClient` (474 lines) on a shared `_JMAPClientBase`, with pure request
-  builders and response parsers in `_methods/`. This is the "separate async
-  classes" option that 0.2 considered and did not recommend, with a Sans-I/O-ish
-  protocol layer underneath.
+- **Separate sync and async classes**: `JMAPClient` (2575 lines) and
+  `AsyncJMAPClient` (1240 lines, as of 2026-10-05) on a shared
+  `_JMAPClientBase`, with pure request builders and response parsers in
+  `_methods/`. This is the hand-written "separate classes" option that 0.2
+  rejected for duplicating every method, with a Sans-I/O-ish protocol layer
+  underneath.
+- Typing: `py.typed`, and CI runs plain `mypy --ignore-missing-imports`, not
+  `--strict`.
 - The API takes and returns **iCalendar strings** (`create_event(calendar_id,
   ical_str)`) and converts to and from JSCalendar internally (`convert/`).
 - It has task methods (`get_task_lists`, `create_task`), even though JMAP for
@@ -204,9 +213,12 @@ package that 2.4 will wrap. Its shape:
 
 **Implication for 2.4:** the backend will be an adapter over two ready-made
 classes, not an instance of the 0.2 architecture. That is fine and expected.
-The conformance suite is what keeps it honest. But it does mean the "one
-implementation, two façades" rule applies to *this* library's code, not to its
-backends' dependencies.
+The conformance suite is what keeps it honest. But it does mean that p4's rule —
+one async-first source, the sync copy generated — applies to *this* library's
+code, not to its backends' dependencies. In p4 terms the adapter's async half
+wraps `AsyncJMAPClient`, and the generated sync half must end up calling
+`JMAPClient`, which takes a replacement-map entry in 1.3's generator, just as
+2.1 needs for `caldav`'s names.
 
 ### 1.6 Outside Python (not verified in this session)
 
@@ -375,15 +387,18 @@ author's own package), then license this package to match `caldav`. Add a
 What the ecosystem uses today: `caldav`, `icalendar`, `icalendar-searcher`,
 `plann` and `calendaring-jmap` all say `>=3.10`. `ical` says `>=3.11`.
 
-**Python 3.10 reaches end of life in October 2026, next month.** Nothing in this
+**Python 3.10 reaches end of life this month, October 2026.** Nothing in this
 project will be released before then.
 
 **Recommendation: `>=3.11`, and drop each version when CPython drops it.** 3.11
 gives, for free:
-- `typing.Self`, which the façade classes from 0.2 will use heavily
+- `typing.Self`, which the async-first classes, and with them their
+  generated sync copies, will use heavily
 - `ExceptionGroup` / `except*` — a natural fit for operations that fan out
   across several backends, where some succeed and some fail
-- `asyncio.TaskGroup`, for the same fan-out in async mode
+- `asyncio.TaskGroup`, for the same fan-out in async mode. Under p4 it
+  belongs in the hand-written per-mode layer, not in `_async/`: `asyncio` is
+  among the things 0.2 found a token rewrite breaks
 - `tomllib`, if 1.4 picks TOML for the configuration file
 
 The cost: `plann` (3.3, dogfooding) would have to raise its floor from 3.10 to
@@ -393,6 +408,11 @@ but they can install a newer Python.
 
 **Alternative:** `>=3.12`, following Scientific Python SPEC 0, which would allow
 the PEP 695 generic syntax. That is not worth losing Debian 12 (3.11) for.
+
+Note that the author's own project template (the *python-project-modernization*
+checklist) defaults to `>=3.10` with a 3.10–3.14 CI matrix, and says a higher
+floor needs a reason and the author's agreement. The reasons are above, and the
+agreement was given:
 
 ### D5. Typing strictness
 
@@ -404,9 +424,18 @@ correctness, not style.
 - `mypy --strict` over the package, **gating in CI**.
 - `pyright --verifytypes calendaring_client` at **100 % type completeness of
   the public API**, gating in CI. This checks what users see, and it is what
-  Home Assistant's `strict-typing` rule relies on. 0.2 checked the prototypes
-  with mypy only, so 1.3 must add pyright, because the two disagree at the
-  edges, especially on overloads and on coroutine-returning `def`.
+  Home Assistant's `strict-typing` rule relies on. Under p4 it runs over the
+  generated `_sync/` copy as well as `_async/`, since users import both.
+- This sits on top of 1.3's own gate (pyright, or mypy with
+  `check_untyped_defs`, over both copies, plus a test that the checker flags a
+  committed missing-`await` specimen). That gate catches p4's codegen slip;
+  `--strict` and `--verifytypes` are about the public API being complete.
+  0.2 ran its typing probe under both mypy and pyright, and they agreed for
+  p4; they still disagree at the edges elsewhere, notably on overloads.
+- This is stricter than the siblings: `caldav` runs no type checker in CI, and
+  `calendaring-jmap` runs plain `mypy --ignore-missing-imports`. Where 2.1 and
+  2.4 call into them, an untyped or loosely typed return must be narrowed at
+  the boundary, not allowed to leak `Any` into the public API.
 - No `Any` in a public signature without a comment saying why.
 - `typing_extensions` is an allowed runtime dependency.
 - Tests: annotations are not required. Ruff's `ANN` rules apply to the package,
@@ -436,6 +465,37 @@ typed view *over* the iCalendar component, not a separate model with its own
 storage. That keeps round-tripping lossless, which Home Assistant's two-status
 `TodoItem` (§1.4) shows is the thing a thin model loses first.
 
+### D7. Tooling conventions
+
+*Not on 0.3's list either, but 1.5 says "matching the sibling projects", and the
+siblings do not match each other.*
+
+| | author's template | `caldav` | `calendaring-jmap` |
+|---|---|---|---|
+| Build, versioning | hatch + hatch-vcs | hatch + hatch-vcs | hatch + hatch-vcs |
+| Changelog | Keep a Changelog, `CHANGELOG.md` | `CHANGELOG.md` | towncrier fragments → `CHANGES.rst` |
+| Docs | — | Sphinx | Sphinx, pydata theme, Read the Docs |
+| Licence metadata | `license = {text = …}` | PEP 639 string + `license-files` | PEP 639 string, REUSE headers |
+| Type checking in CI | — | none | plain mypy |
+| HTTP | niquests preferred | niquests (httpx optional) | niquests |
+| Other | ruff, pre-commit, lychee, conventional commits, `filterwarnings = ["error"]`, trusted publishing | ruff, pre-commit, lychee, conventional commits | ruff, pre-commit, REUSE, zizmor |
+
+**Proposal for 1.5:** the author's template as the baseline. It is what the
+single maintainer works with every day, and its `filterwarnings = ["error"]` is
+what 1.3 already demands (`-W error`). Two things to take from
+`calendaring-jmap` on top: Sphinx on Read the Docs, since 4.1 needs a doc site
+anyway and both siblings use Sphinx; and REUSE, if D3 ends at AGPL, which
+makes the licence of every file explicit at little cost. towncrier is not worth
+it for a one-maintainer project.
+
+The template's warning against the PEP 639 licence string is about pip 22 on
+Ubuntu 22.04, whose system Python is 3.10. With D4's floor of 3.11 those users
+cannot install the package anyway, so the string form, as both siblings use it,
+is fine.
+
+For HTTP, niquests for 2.3, as the template and both siblings use it, with the
+caller-owned session that §1.4 asks for.
+
 ---
 
 ## Open questions for the author
@@ -450,6 +510,8 @@ storage. That keeps round-tripping lossless, which Home Assistant's two-status
 5. **D6**: does "iCalendar is the model, everything else converts" agree with
    the task model proposed in the [0.1 survey](TASK_MODEL_SURVEY.md) Part 4?
    It should, but that is the author's call.
+6. **Tooling** (D7): the personal template plus Sphinx and REUSE, without
+   towncrier?
 
 ---
 

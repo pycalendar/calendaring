@@ -169,14 +169,17 @@ prototyping.
 
 - **Priority:** High — blocks 1.1
 - **Estimated effort:** 8 hours
-- **Deliverable:** a short document recording each decision and its rationale
+- **Deliverable:** a short document recording each decision and its rationale —
+  [`PRIOR_ART_AND_DECISIONS.md`](PRIOR_ART_AND_DECISIONS.md), which records the
+  author's decisions of 2026-10-05
 - **Dependencies:** none
 
 **Tasks:**
-- [ ] **Settle the name.** "calendar-client" and "calendaring-client" both fail to
+- [ ] **Settle the name.** Proposal: keep `calendaring-client` (D2).
+      "calendar-client" and "calendaring-client" both fail to
       signal task support. Decide before the first PyPI upload; a rename afterwards
       is expensive. Check PyPI availability.
-- [ ] **Write up the packaging principle.** Two questions a reviewer will ask are
+- [x] **Write up the packaging principle.** (D1) Two questions a reviewer will ask are
       already decided, and both follow from one principle: logic unrelated to the
       CalDAV protocol does not belong in the `caldav` library.
       - *This library is a separate package*, not a backend layer inside a
@@ -189,13 +192,15 @@ prototyping.
         business, not this roadmap's.
       The work here is to record the principle and its consequences, not to decide
       them.
-- [ ] Review `icalcli`'s pluggable-backend design (already researched — see README)
-- [ ] Review how HomeAssistant currently handles calendar integrations, and whether
+- [x] Review `icalcli`'s pluggable-backend design (already researched — see README)
+- [x] Review how HomeAssistant currently handles calendar integrations, and whether
       this library is useful to them (README names them as a target user)
-- [ ] Standards review: RFC 5545 (iCalendar), RFC 5546 (iTIP), RFC 7265 (jCal),
+- [x] Standards review: RFC 5545 (iCalendar), RFC 5546 (iTIP), RFC 7265 (jCal),
       RFC 9253 (relationships), JMAP Calendars (RFC 8984 / JSCalendar), ActivityPub,
       org-mode. Record which are in scope for the funded period.
-- [ ] Record a Python version support floor and a typing strictness policy
+- [ ] Record a Python version support floor and a typing strictness policy.
+      Proposals: `>=3.11` (D4), `mypy --strict` plus `pyright --verifytypes`
+      (D5)
 
 ---
 
