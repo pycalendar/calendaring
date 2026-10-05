@@ -2,7 +2,7 @@
 
 *One Python API for calendars and task lists: CalDAV, JMAP, iCalendar feeds, local files and issue trackers.*
 
-The name of the library is not yet set in stone: it is either `calendaring-client` or `calendaring`, and the same name on GitHub, PyPI and as the import (see [the 0.3 decisions](docs/design/PRIOR_ART_AND_DECISIONS.md#d2-the-name)).  "Calendaring" is the IETF's word, and in RFC 5545 it covers tasks too, but few people know that, so the tagline above carries the message that this library supports tasks and not only events.
+The library is called `calendaring`: the same name on GitHub, on PyPI and as the import (see [the 0.3 decisions](docs/design/PRIOR_ART_AND_DECISIONS.md#d2-the-name)).  It was earlier called `calendaring-client`.  "Calendaring" is the IETF's word, and in RFC 5545 it covers tasks too, but few people know that, so the tagline above carries the message that this library supports tasks and not only events.
 
 ## Background
 
@@ -59,6 +59,12 @@ TODO: do more research to see if there are other standards
 
 ## Users
 
-* I'm also developing plann - a CLI and a library for more advanced calendaring and task management.  It offers things that are out of the scope of both CalDAV and the calendaring-client, including "panic planning" where it's trying to fit the tasks with the highest priority into the available time before the deadlines.  It's using the CalDAV library, but I would like to support more than only CalDAV servers.
+* I'm also developing plann - a CLI and a library for more advanced calendaring and task management.  It offers things that are out of the scope of both CalDAV and this library, including "panic planning" where it's trying to fit the tasks with the highest priority into the available time before the deadlines.  It's using the CalDAV library, but I would like to support more than only CalDAV servers.
 * Over the last years quite many CalDAV issues has come in through users of HomeAssistant.  I would like to reach out to the HomeAssistant community and see if they have use for something like this (unless they already have implemented something internally).
 * I think that any project that either reads iCalendar feeds or uses the CalDAV client library could have use for such a "swiss army knife".
+
+## License
+
+`calendaring` is dual-licensed: GPL-3.0-or-later ([`COPYING.GPL`](COPYING.GPL)) **or** Apache-2.0 ([`COPYING.APACHE`](COPYING.APACHE)), at your choice.
+
+The JMAP backend will depend on `calendaring-jmap`, which is AGPL-3.0-or-later.  It is an optional extra (`calendaring[jmap]`).  A program that includes it must, as a whole, be conveyed under AGPL-3.0 terms; `calendaring`'s own code remains available under either licence.  The same holds for the hard dependency `icalendar-searcher` until its pending relicensing to match lands.

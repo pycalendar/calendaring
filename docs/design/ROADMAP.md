@@ -175,11 +175,9 @@ prototyping.
 - **Dependencies:** none
 
 **Tasks:**
-- [ ] **Settle the name.** Still open: `calendaring-client` or `calendaring`,
-      the same on GitHub, PyPI and as the import name (D2).
-      "calendar-client" and "calendaring-client" both fail to
-      signal task support. Decide before the first PyPI upload; a rename afterwards
-      is expensive. Check PyPI availability.
+- [x] **Settle the name.** `calendaring`, the same on GitHub, PyPI and as the
+      import name (D2). It does not signal task support by itself; the
+      tagline carries that. Free on PyPI as of 2026-10-05.
 - [x] **Write up the packaging principle.** (D1) Two questions a reviewer will ask are
       already decided, and both follow from one principle: logic unrelated to the
       CalDAV protocol does not belong in the `caldav` library.
@@ -329,7 +327,7 @@ Modest, because the author has an established pattern to copy from
 - [ ] ruff and pre-commit, matching the sibling projects
 - [ ] CI matrix across supported Python versions
 - [ ] PyPI publishing workflow
-- [ ] Licence files for GPL-3.0-or-later OR Apache-2.0 (0.3, D3), SECURITY.md,
+- [ ] `license-files` for the `COPYING.*` already in place (0.3, D3), SECURITY.md,
       a towncrier changelog (0.3, D7)
 
 ---

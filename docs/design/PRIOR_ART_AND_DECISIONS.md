@@ -3,18 +3,17 @@
 **Roadmap item:** [0.3 Prior art, standards and project decisions](ROADMAP.md#03-prior-art-standards-and-project-decisions)
 **Status:** drafted by Claude Opus 5.5 on 2026-09-24, updated on 2026-10-05
 for 0.2's decision (p4) and re-checked against `caldav` and `calendaring-jmap`
-— and reviewed by the author on 2026-10-05. D1, D3–D7 are now decisions; D2,
-the name, is still open.
+— and reviewed by the author on 2026-10-05. D1–D7 are now decisions.
 **Deliverable:** this document
 
 **Findings that need attention before anything else:**
 
-1. **Licensing.** This repository has no `LICENSE` file. Two of its intended
+1. **Licensing.** This repository had no licence file (resolved, see D3). Two of its intended
    dependencies, `icalendar-searcher` and `calendaring-jmap`, are
    **AGPL-3.0-or-later**, and `caldav` — dual-licensed GPL-3.0-or-later *or*
    Apache-2.0 — has a hard dependency on `icalendar-searcher`. Decided: dual
    licence, with JMAP optional. See [D3](#d3-licence).
-2. **The name is already public.** [pycal.org](https://pycal.org) lists
+2. **The name is already public** (decided since: `calendaring`, see D2). [pycal.org](https://pycal.org) lists
    `calendaring-client` as a planned package, next to the sibling
    `calendaring-jmap` (on PyPI, 1.1.0) and an empty `calendaring-sync` repo. A
    `calendaring-*` family already exists, and that changes the naming question.
@@ -280,7 +279,7 @@ carrying `VALARM` extensions and `X-` properties, save it, read it back, compare
 
 ---
 
-## Part 3: Project decisions (proposals)
+## Part 3: Project decisions
 
 ### D1. Packaging principle
 
@@ -330,22 +329,23 @@ by that name exists. It does not guarantee the name can be registered:
 | `calendaring-tasks`, `caltask`, `caltasks`, `taskcal` | free |
 | `pim-client`, `pimlib` | free |
 
-**Recommendation: keep `calendaring-client`, and make the tagline carry the task
-message.** The pycal.org description ("One API for CalDAV, JMAP, and plain
+**Recommendation (superseded by the decision below): keep `calendaring-client`,
+and make the tagline carry the task message.** The pycal.org description ("One API for CalDAV, JMAP, and plain
 iCalendar feeds") currently says nothing about tasks. Change it and the PyPI
 summary to something like *"One Python API for calendars and task lists: CalDAV,
 JMAP, iCalendar feeds, local files and issue trackers."* A name that tries to
 say "events and tasks and trackers" gets long (`calendaring-and-tasks`) or
 vague (`pim-client`, which also suggests contacts). The family prefix is
 worth more than the signal.
+
 The tagline is now in place on GitHub and in the README; pycal.org still has the
 old one.
 
-**Also: register `calendaring` too**, as a placeholder or as the import name. A
+**Also (superseded): register `calendaring` too**, as a placeholder or as the import name. A
 bare `calendaring` would otherwise be free for anyone to squat on, next to
 three packages that share the prefix. Whether the import name is
 `calendaring_client` (consistent with `calendaring_jmap`) or `calendaring`
-(shorter) is a minor call. Proposal: `calendaring_client`, for consistency.
+(shorter) is a minor call. Proposal (superseded): `calendaring_client`, for consistency.
 
 **Rejected alternatives:** `calendar-client` is too close to "Google Calendar
 client" in search results and not in the family. `pim-*` promises contacts.
@@ -376,8 +376,13 @@ underscore.
 
 **Conclusion:** do not split. Either keep `calendaring-client` everywhere, which
 costs nothing, or move to `calendaring` everywhere before the first upload (1.5),
-which costs a rename now and buys a shorter front-door name. This is still the
-author's call.
+which costs a rename now and buys a shorter front-door name.
+
+**Decision (author, 2026-10-05): `calendaring` everywhere** — the GitHub
+repository, the PyPI distribution and the import name. The repository was
+renamed the same day. pycal.org and the NLnet paperwork still say
+`calendaring-client`, and so do branches written before the decision; they are
+updated as they are touched.
 
 ### D3. Licence
 
@@ -391,7 +396,7 @@ and the dependency picture makes it non-trivial.* This is not legal advice.
 | `calendaring-jmap` | **AGPL-3.0-or-later** | dependency of 2.4 |
 | `icalendar` | BSD-2-Clause | hard dependency |
 | `recurring-ical-events` | LGPL-3.0-or-later | via `caldav`, `icalendar-searcher` |
-| this repo | **none** | — |
+| this repo | GPL-3.0-or-later **OR** Apache-2.0 (decided below; no licence before 2026-10-05) | — |
 
 Two observations:
 
@@ -403,6 +408,9 @@ Two observations:
    Assistant (Apache-2.0) already ships `caldav`. Whether that is a problem is
    for the author to judge. It is noted here because this library would inherit
    it, and HA is a stated target user.
+
+The decision below resolves both, once `icalendar-searcher` is relicensed,
+except for the optional JMAP extra.
 
 **Options:**
 - **AGPL-3.0-or-later**, like the two siblings. Consistent, and it matches what
@@ -416,7 +424,7 @@ request is open there), which also makes `caldav`'s Apache option real.
 
 Consequences:
 - `calendaring-jmap` stays AGPL, so it must be an **optional dependency**, an
-  extra such as `calendaring-client[jmap]`, never a hard one. 2.4 builds the
+  extra such as `calendaring[jmap]`, never a hard one. 2.4 builds the
   backend behind that extra, and a test should check that the package imports
   without it.
 - **A program that includes the JMAP extra must, as a whole, be conveyed under
@@ -425,9 +433,8 @@ Consequences:
   installing the extra triggers nothing. That has to be said where a user will
   see it before choosing: in the README, in the JMAP backend's documentation
   (2.4, 4.1), and in the capability matrix (4.3).
-- Add the licence files (`caldav` uses `COPYING.GPL` and `COPYING.APACHE` with
-  `license-files`) before code lands. The repository already carries the 0.2
-  prototypes with no licence, so this is not hypothetical; 1.5 owns it.
+- The licence files, `COPYING.GPL` and `COPYING.APACHE` as in `caldav`, were
+  added on 2026-10-05; 1.5 lists them in `license-files`.
 
 ### D4. Python version floor
 
@@ -472,7 +479,7 @@ correctness, not style.
 **Decision (author, 2026-10-05), as proposed:**
 - Ship `py.typed`.
 - `mypy --strict` over the package, **gating in CI**.
-- `pyright --verifytypes calendaring_client` at **100 % type completeness of
+- `pyright --verifytypes calendaring` at **100 % type completeness of
   the public API**, gating in CI. This checks what users see, and it is what
   Home Assistant's `strict-typing` rule relies on. Under p4 it runs over the
   generated `_sync/` copy as well as `_async/`, since users import both.
@@ -561,8 +568,7 @@ caller-owned session that §1.4 asks for.
 
 1. **Licence** (D3): dual GPL-3.0-or-later OR Apache-2.0, with
    `icalendar-searcher` relicensed and JMAP optional.
-2. **Name** (D2): **open.** `calendaring-client` everywhere, or `calendaring`
-   everywhere; not split.
+2. **Name** (D2): `calendaring`, on GitHub, PyPI and as the import name.
 3. **Python floor** (D4): 3.11.
 4. **Home Assistant** (§1.4): no code-ownership offer for now. The author is
    considering Home Assistant for personal use, and will reconsider then.
