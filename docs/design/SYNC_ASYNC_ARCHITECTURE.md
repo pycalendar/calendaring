@@ -1,7 +1,8 @@
 # Sync/async architecture: comparison and recommendation
 
 **Roadmap item:** [0.2 Sync/async architecture](ROADMAP.md#02-syncasync-architecture)
-**Status:** drafted — awaiting the author's review
+**Status:** recommendation accepted by the author; clean-context review of p4
+pending
 **Deliverable:** this comparison, backed by runnable prototypes in
 [`prototypes/sync_async/`](../../prototypes/sync_async/)
 
@@ -446,9 +447,9 @@ translated either: the generated `buggy.py` still says `# BUG: missing await`.
 ## 10. Recommendation
 
 Adopt **async-first source with a committed, `unasync`-generated sync copy**, and
-implement it as roadmap item 1.3. The author should confirm this explicitly,
-since it reverses both the previous draft and the author's earlier stated
-preference.
+implement it as roadmap item 1.3. The author has accepted this. Codegen is still
+unattractive to the author, but fighting a Sans-I/O design for methods that make
+several round trips is less attractive still.
 
 1. The object layer is written once, in `_async/`, as ordinary `async def` /
    `await` code with `Async*` class names.
@@ -490,7 +491,8 @@ enforcement mechanisms was broken in its first draft — the guard did not cover
 the façades, the static check both missed the real mistake and rejected the
 design it protected, and the completeness test did not exist while the document
 claimed it did. p4 was written in a single pass and has **not** had a
-clean-context review yet; its claims should get one before 1.3 starts.
+clean-context review yet; it gets one before 1.3 starts (a task in
+[1.3](ROADMAP.md#13-syncasync-scaffolding)).
 
 ### What is not settled
 
