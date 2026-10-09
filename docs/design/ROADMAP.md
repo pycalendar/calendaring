@@ -219,7 +219,7 @@ disguise. The test of the design is not "does it fit CalDAV" but "does it fit
 CalDAV *and* a Gitea issue tracker without lying about either".
 
 **Tasks:**
-- [x] Define the object model: client, backend, collection, calendar object,
+- [x] Define the object model: workspace, backend, collection, calendar object,
       task, event, journal
 - [x] Define the search/filter interface, reusing `icalendar-searcher` so that
       client-side and server-side filtering behave identically

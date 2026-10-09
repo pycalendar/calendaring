@@ -27,11 +27,11 @@ deliberately not the package name.
 
 | # | Decision | Section |
 |---|---|---|
-| A1 | Items (events, tasks, journals) are plain data, the same class in sync and async code. I/O lives on `Collection`, `Backend` and `Client`, which come in a sync and an async version. | [§1 Layers and modes](#1-layers-and-modes), [§2 The I/O classes](#2-the-io-classes) |
+| A1 | Items (events, tasks, journals) are plain data, the same class in sync and async code. I/O lives on `Collection`, `Backend` and `Workspace`, which come in a sync and an async version. | [§1 Layers and modes](#1-layers-and-modes), [§2 The I/O classes](#2-the-io-classes) |
 | A2 | An item is a typed view over an `icalendar.Calendar`, delegating to `icalendar`'s own typed properties wherever they exist. | [§3 Items](#3-items) |
 | A3 | Search takes an `icalendar_searcher.Searcher`. The server may filter, but only ever *more loosely*; the client always re-filters. Results are therefore identical on every backend by construction. | [§4 Search](#4-search) |
 | A4 | Capabilities are a typed table per collection: feature → support level (`FULL`, `LOSSY`, `EMULATED`, `UNSUPPORTED`, `UNKNOWN`). | [§5 Capabilities](#5-capabilities) |
-| A5 | Unsupported operations raise before any I/O. A write that would lose data raises by default; the caller can downgrade that to a warning or allow it, per call or per client. Emulation happens only where the result is indistinguishable. | [§5.3 What happens when the caller asks for something unsupported](#53-what-happens-when-the-caller-asks-for-something-unsupported) |
+| A5 | Unsupported operations raise before any I/O. A write that would lose data raises by default; the caller can downgrade that to a warning or allow it, per call or per workspace. Emulation happens only where the result is indistinguishable. | [§5.3 What happens when the caller asks for something unsupported](#53-what-happens-when-the-caller-asks-for-something-unsupported) |
 | A6 | One exception hierarchy under `CalendaringError`; native exceptions are always chained as `__cause__`. | [§6 Errors](#6-errors) |
 | A7 | Every item carries an `etag`, real or synthetic (vdirsyncer's contract). Every collection answers `changes(token)`, natively or by emulation. | [§7 Change detection](#7-change-detection) |
 | A8 | The escape hatch is `.native` on every object, typed per backend, plus `native_status` / `native_priority` on tasks. | [§8 The escape hatch](#8-the-escape-hatch) |
@@ -42,13 +42,13 @@ deliberately not the package name.
 ## 1. Layers and modes
 
 ```
-Client ──< Backend ──< Collection ──< item: Event | Task | Journal
- (config,     (one store:       (calendar, task list,     (plain data over
-  fan-out)     server, dir,      repo, directory, feed)    icalendar.Calendar)
-               file, feed)
+Workspace ──< Backend ──────< Collection ──────────< item: Event | Task | Journal
+(config,      (one store:      (calendar, task list,  (plain data over
+ fan-out)      server, dir,     repo, directory,       icalendar.Calendar)
+               file, feed)      feed)
 ```
 
-- **Client** — a set of backends, usually all the ones a configuration
+- **Workspace** — a set of backends, usually all the ones a configuration
   file ([roadmap 1.4](ROADMAP.md#14-configuration-and-credentials)) lists,
   and operations that fan out across them. Optional: a caller with one
   server never needs it.
@@ -76,16 +76,18 @@ names both the kind (the CalDAV backend) and an instance of it (this
 `CalDAVBackend` pointed at that server). In practice the class name carries
 the kind and the variable carries the instance, and the [roadmap 1.2](ROADMAP.md#12-abstract-base-classes-and-the-backend-conformance-suite) ABC that a
 backend author subclasses is the same `Backend`, so there is one word for
-it instead of two. `Client` is kept for the aggregator: across all
-configured backends, the library is the client.
+it instead of two. The aggregator is a `Workspace`: "client" is an HTTP
+word that could mean anything, and a workspace is everything you have
+configured (chosen by the author, 2026-10-09; see
+[§10 Open questions](#10-open-questions), Q2).
 
 ### 1.1 Sync and async
 
 Under p4 the async classes are the source and the sync classes are
-generated. The public names follow httpx: `Client` / `AsyncClient`,
+generated. The public names follow httpx's pattern: `Workspace` / `AsyncWorkspace`,
 `Backend` / `AsyncBackend`, `Collection` / `AsyncCollection`, all importable
 from `calendaring`. That costs one replacement-map entry per class in [roadmap 1.3](ROADMAP.md#13-syncasync-scaffolding)'s
-generator (unasync would otherwise produce `SyncClient`), which [roadmap 1.3](ROADMAP.md#13-syncasync-scaffolding) already
+generator (unasync would otherwise produce `SyncWorkspace`), which [roadmap 1.3](ROADMAP.md#13-syncasync-scaffolding) already
 lists.
 
 **Items are not generated and have no async twin (A1).** They do no I/O.
@@ -109,7 +111,7 @@ The cost is familiarity: a caldav user writes `todo.complete()` and
 method names are kept from caldav where the meaning is the same, so the
 change is in where the method lives, not what it is called.
 
-Lifecycle: `Client` and `Backend`, which own sessions, are context
+Lifecycle: `Workspace` and `Backend`, which own sessions, are context
 managers (`with` / `async with`) and have `close()`, awaited in async mode.
 A `Collection` is a cheap handle onto its backend's session and has none. The name is `close` in both modes, not
 `aclose`, because unasync does not rewrite `aclose` ([sync/async comparison §9](SYNC_ASYNC_ARCHITECTURE.md#9-result-pagination-and-the-filesystem-backend)).
@@ -127,10 +129,10 @@ unasync's table; [roadmap 0.2](ROADMAP.md#02-syncasync-architecture) did not pro
 Signatures are given in their async form; the sync form is identical
 without `async`/`await`. Types not defined here are in [§3 Items](#3-items)–[§7 Change detection](#7-change-detection).
 
-### 2.1 Client
+### 2.1 Workspace
 
 ```python
-class AsyncClient:
+class AsyncWorkspace:
     @classmethod
     def from_config(cls, path: str | Path | None = None, *, section: str | None = None) -> Self: ...
     def __init__(self, backends: Iterable[AsyncBackend] = ()) -> None: ...
@@ -145,10 +147,10 @@ class AsyncClient:
 ```
 
 `from_config` is specified by [roadmap 1.4](ROADMAP.md#14-configuration-and-credentials); this document only fixes that it exists and returns
-a client.
+a workspace.
 
-**Fan-out returns partial results.** `Client.collections` asks every
-backend, and `Client.search` every collection, and both return a
+**Fan-out returns partial results.** `Workspace.collections` asks every
+backend, and `Workspace.search` every collection, and both return a
 `MultiResult` (a generic dataclass): `.items`, `.errors: Mapping[collection_id,
 CalendaringError]`, and `.raise_for_errors()`, which raises an
 `ExceptionGroup` (new in Python 3.11, which is the supported minimum: [D4](PRIOR_ART_AND_DECISIONS.md#d4-python-version-floor)) if any collection failed. One unreachable server
@@ -683,7 +685,7 @@ Three cases, matching the roadmap's "raise, degrade, or emulate":
   status, a `DEPENDS-ON` to Gitea's API version without dependencies).
   `RAISE` raises `LossyWriteError` with that list and sends nothing; `WARN`
   emits `LossyWriteWarning` and writes; `ALLOW` writes. The policy is set
-  per client or backend and can be overridden per call (`loss=`). Default
+  per workspace or backend and can be overridden per call (`loss=`). Default
   `RAISE` because the alternative is the Home Assistant failure ([prior art §1.4, Home Assistant](PRIOR_ART_AND_DECISIONS.md#14-home-assistant)): `IN-PROCESS` silently becoming `needs_action`. A warning is also
   what [roadmap 1.3](ROADMAP.md#13-syncasync-scaffolding)'s `-W error` test runs turn back into a failure.
 - **Emulation → automatic, only when indistinguishable.** Client-side
@@ -730,8 +732,8 @@ CalendaringWarning
   `ValueError`, so generic code that catches the built-ins still works.
 - `RateLimitError` is raised, not retried. Retrying belongs to the
   hand-written per-mode layer ([roadmap 0.2](ROADMAP.md#02-syncasync-architecture): `asyncio.sleep` must not be in
-  `_async/`), and whether it retries is a client option ([roadmap 1.4](ROADMAP.md#14-configuration-and-credentials)).
-- Fan-out ([§2.1 Client](#21-client)) does not raise; `MultiResult.raise_for_errors()` raises an `ExceptionGroup` of these.
+  `_async/`), and whether it retries is a workspace option ([roadmap 1.4](ROADMAP.md#14-configuration-and-credentials)).
+- Fan-out ([§2.1 Workspace](#21-workspace)) does not raise; `MultiResult.raise_for_errors()` raises an `ExceptionGroup` of these.
 
 caldav's errors map one to one where they overlap:
 `NotFoundError` → `NotFoundError`, `ETagMismatchError` and
@@ -829,7 +831,7 @@ caldav's public API as of 2026-10-08 (caldav 3.4.0).
 
 | caldav | calendaring | |
 |---|---|---|
-| `get_davclient()`, `get_calendar(s)()`, config file | `Backend.connect()`, `Client.from_config()` | changed; same config file ([config proposal](CONFIGURATION_PROPOSAL.md)) |
+| `get_davclient()`, `get_calendar(s)()`, config file | `Backend.connect()`, `Workspace.from_config()` | changed; same config file ([config proposal](CONFIGURATION_PROPOSAL.md)) |
 | `principal()`, `calendars()`, `make_calendar(supported_calendar_component_set=…)` | `backend.collections()`, `create_collection(components=…)` | same |
 | `get_supported_components()` | `collection.components` | same |
 | `search(…)`, `CalDAVSearcher` | `collection.search(…)` with a `Searcher` | same; caldav already post-filters client-side |
@@ -880,7 +882,7 @@ share their data model (`icalendar` objects) and the escape hatch goes
 both ways:
 
 1. **Connect through calendaring, keep calling caldav.** plann gets its
-   collections from `Client.from_config()` (roadmap 1.4, which plann's
+   collections from `Workspace.from_config()` (roadmap 1.4, which plann's
    credential work already waits for) and uses `collection.native`, a
    `caldav.Calendar`, everywhere else. Nothing else changes.
 2. **Move the reads:** search, `get`, `relatives`. Where plann still holds
@@ -907,7 +909,7 @@ For the author and for peer review. Each has a proposed answer; none blocks
    2026-10-09: "I don't like it — but this is probably a necessary cost of
    getting the async/sync schism right."* Accepted unless a peer reviewer
    brings a better argument.
-2. **The name `Client`.** The author dislikes it ("could mean anything")
+2. *Decided, 2026-10-09: `Workspace`.* **The name `Client`.** The author disliked it ("could mean anything")
    and suggested `CalendaringConfig`, `CalendaringCollection` and
    `Calendaring`. What the object is: a set of backends, usually loaded from
    configuration, with fan-out operations over them. The criteria: not an
@@ -923,8 +925,8 @@ For the author and for peer review. Each has a proposed answer; none blocks
    | `Session` | requests/SQLAlchemy usage, but clashes with the HTTP session a backend owns |
    | **`Workspace`** | "everything you have configured"; no clash; survives a rename |
 
-   **Proposal: `Workspace`.** Not applied in the text yet, so that the
-   author can still choose; renaming is a search and replace.
+   **Proposal: `Workspace`**, accepted by the author and applied
+   throughout.
 3. **Where recurring-task completion lives.** caldav's `complete(handle_rrule=…)`
    logic, and the occurrence merge behind `save(only_this_recurrence=…)`,
    are not CalDAV protocol logic, and by [D1](PRIOR_ART_AND_DECISIONS.md#d1-packaging-principle)
