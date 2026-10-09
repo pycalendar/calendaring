@@ -2,8 +2,8 @@
 
 **Roadmap item:** [1.1 Unified API design and peer review](ROADMAP.md#11-unified-api-design-and-peer-review)
 
-**Status:** draft by Claude Opus 5.5, 2026-10-08. The author has reviewed it
-up to [§3.2 Identity](#32-identity); not yet peer-reviewed ([§10 Peer review](#10-peer-review)).
+**Status:** draft by Claude Opus 5.5, 2026-10-08. Reviewed by the author on
+2026-10-08 and 09, comments applied; not yet peer-reviewed ([§11 Peer review](#11-peer-review)).
 
 **Inputs:** [0.1 task model survey](TASK_MODEL_SURVEY.md),
 [0.2 sync/async decision](SYNC_ASYNC_ARCHITECTURE.md#11-decision),
@@ -35,7 +35,7 @@ deliberately not the package name.
 | A6 | One exception hierarchy under `CalendaringError`; native exceptions are always chained as `__cause__`. | [§6 Errors](#6-errors) |
 | A7 | Every item carries an `etag`, real or synthetic (vdirsyncer's contract). Every collection answers `changes(token)`, natively or by emulation. | [§7 Change detection](#7-change-detection) |
 | A8 | The escape hatch is `.native` on every object, typed per backend, plus `native_status` / `native_priority` on tasks. | [§8 The escape hatch](#8-the-escape-hatch) |
-| A9 | Fields RFC 5545 lacks go to RFC 9253 or the tasks draft, then `X-PYCALENDAR-*`. | [§3.6 Properties with no standard home](#36-properties-with-no-standard-home) |
+| A9 | Fields RFC 5545 lacks go to RFC 9253 or the tasks draft, then `X-PYCAL-*`. | [§3.6 Properties with no standard home](#36-properties-with-no-standard-home) |
 
 ---
 
@@ -212,12 +212,17 @@ class AsyncCollection:
     async def get(self, uid: str) -> CalendarObject: ...                # NotFoundError
     async def get_by_native_id(self, native_id: str) -> CalendarObject: ...
     async def reload(self, item: T) -> T: ...                           # fresh copy, new etag
+    async def relatives(self, item: CalendarObject, reltype: str | None = None) -> list[CalendarObject]: ...
 
     # writing
     async def add(self, item: T, *, loss: LossPolicy | None = None) -> T: ...
-    async def save(self, item: T, *, overwrite: bool = False, loss: LossPolicy | None = None) -> T: ...
+    async def save(self, item: T, *, overwrite: bool = False, scope: Scope = Scope.THIS,
+                   loss: LossPolicy | None = None) -> T: ...      # scope: occurrences only, §3.7
     async def delete(self, item: CalendarObject | str, *, overwrite: bool = False) -> None: ...
-    async def complete(self, task: Task, at: datetime | None = None) -> Task: ...
+    async def complete(self, task: Task, at: datetime | None = None,
+                       mode: Literal["safe", "this_and_future"] = "safe") -> Task: ...
+    def wrap(self, native_item: object) -> CalendarObject: ...         # no I/O; see "The escape hatch"
+    async def uncomplete(self, task: Task) -> Task: ...
     async def move(self, item: T, target: AsyncCollection) -> T: ...
 
     # change detection
@@ -240,8 +245,14 @@ argument is not mutated.
 
 **`complete`** is an I/O method because completing a recurring task may
 write two objects: caldav's "safe" mode completes a copy of the occurrence
-and moves the master's `DTSTART`. Where that logic should live is an open
-question ([§9 Open questions](#9-open-questions), Q3).
+and moves the master's `DTSTART`. The modes are caldav's, with the same
+meaning.
+
+**`relatives`** fetches the objects an item's `RELATED-TO` points at (and,
+for `PARENT`, the children pointing back), as caldav's `get_relatives()`
+does. plann calls it 16 times, so it has to be here. Relatives outside
+this collection are looked up across the backend. Where that logic should live is an open
+question ([§10 Open questions](#10-open-questions), Q3).
 
 **`move`** within one backend uses its own move where it has one
 (CalDAV `MOVE`); between backends it is `add` to the target, then `delete`
@@ -272,6 +283,9 @@ class CalendarObject:
     summary: str | None
     description: str | None
     categories: list[str]
+    relations: list[Relation]           # RELATED-TO; Relation(uid: str, reltype: str = "PARENT"), RFC 9253 RELTYPE
+    attendees: list[Attendee]           # ATTENDEE; on a task, its assignees (see "Task")
+    organizer: Attendee | None          # ORGANIZER
     created: datetime | None
     last_modified: datetime | None
 
@@ -356,17 +370,18 @@ class Task(CalendarObject):
     start: date | datetime | None       # DTSTART: earliest sensible start (tasks draft reading)
     due: date | datetime | None         # DUE, or DTSTART + DURATION
     completed: datetime | None          # COMPLETED
-    planned_start: datetime | None      # X-PYCALENDAR-PLANNED-START
-    planned_end: datetime | None        # X-PYCALENDAR-PLANNED-END
+    planned_start: datetime | None      # X-PYCAL-PLANNED-START
+    planned_end: datetime | None        # X-PYCAL-PLANNED-END
 
+    duration: timedelta | None          # derived: DUE - DTSTART; see set_duration()
     estimate: timedelta | None          # ESTIMATED-DURATION (tasks draft)
     # time_log, time_spent: added by roadmap 1.6
 
-    relations: list[Relation]           # RELATED-TO with RFC 9253 RELTYPE
     parent: str | None                  # convenience over relations: the PARENT uid
     depends_on: list[str]               # convenience: DEPENDS-ON uids
-    assignees: list[str]                # ATTENDEE; calendar addresses or backend user names
     rrule: icalendar.vRecur | None
+
+    def set_duration(self, duration: timedelta, keep: Literal["start", "due"] = "due") -> None: ...
 ```
 
 Decisions in it, each from the survey:
@@ -376,9 +391,14 @@ Decisions in it, each from the survey:
   found (planned start, expected completion) get their own fields instead
   of overloading it. Actual start comes from the time log ([roadmap 1.6](ROADMAP.md#16-time-tracking-model-and-api)), not from a
   field.
-- **`DURATION` is not exposed as a task field.** On a task it is either
-  `DUE − DTSTART` or a misused estimate; `due` reads through it when `DUE`
-  is absent, and `estimate` is `ESTIMATED-DURATION`.
+- **`duration` is derived, not stored.** On a task, `DURATION` is either
+  `DUE − DTSTART` or a misused estimate. `task.duration` reads
+  `DUE − DTSTART` (or `DURATION` when only that is present), and
+  `task.set_duration(d, keep="due" | "start")` moves the other end, as
+  caldav's `set_duration(movable_attr=…)` does; plann uses both. The
+  default keeps `DUE`, as caldav's does, because a deadline is more often
+  fixed than a start. The
+  estimate is `estimate` (`ESTIMATED-DURATION`), never `duration`.
 - **`remaining` is left out** ([survey §4.4](TASK_MODEL_SURVEY.md#44-details-to-be-decided-later)). Two of the nine systems carry
   it, neither is a funded backend, and every typed field is a mapping
   obligation on every backend. It is reachable through the escape hatch on
@@ -387,10 +407,29 @@ Decisions in it, each from the survey:
 - **`priority` is iCalendar's 0–9.** The survey found five incompatible
   scales; the mapping to each is the backend's, documented as lossy.
   plann's semantics for 1–9 sit on top of this and are plann's.
-- **`assignees` are `ATTENDEE`s**, as RFC 5545 allows on a `VTODO`. A
-  tracker's user names are not calendar addresses: the Gitea mapper writes
-  `ATTENDEE;X-PYCALENDAR-LOGIN=alice:…`. Whether that is the right shape is
-  open ([§9 Open questions](#9-open-questions), Q5).
+- **Assignees are the task's `attendees`**, defined on the base class
+  because events have them too. The tasks draft (section 6) says it in so
+  many words: "Tasks are assigned to actors using one or more RFC5545
+  'ATTENDEE' properties and/or one or more RFC9073 'PARTICIPANT'
+  calendar components." So the standard has no gap here, and no `X-`
+  property is needed. What looks like a gap is that a tracker knows a
+  login (`alice`), while `ATTENDEE` takes a calendar address. A calendar
+  address is any URI, not only `mailto:` (RFC 5545 §3.3.3), so the Gitea
+  mapper writes the user's profile URL:
+  `ATTENDEE;CN=Alice:https://gitea.example.com/alice`. That is valid,
+  unique, resolvable, and round-trips, with no fake e-mail address. Mapping
+  logins to and from those URIs is the backend's job, and
+  `task.assignees` is not a separate field, to avoid two names for one
+  thing.
+
+  ```python
+  @dataclass
+  class Attendee:
+      address: str                      # the CAL-ADDRESS URI: mailto:, https:, ...
+      name: str | None = None           # CN
+      role: str | None = None           # ROLE
+      status: str | None = None         # PARTSTAT, including the tasks draft's FAILED
+  ```
 
 ### 3.5 Native passthrough
 
@@ -412,29 +451,65 @@ and are not part of the model.
 
 [D6](PRIOR_ART_AND_DECISIONS.md#d6-canonical-in-memory-model) sets the order: an RFC 5545 property; then RFC 9253 or the tasks draft;
 then an `X-` property under one documented prefix. **The prefix is
-`X-PYCALENDAR-`**, after the GitHub organisation, not `X-CALENDARING-`:
+`X-PYCAL-`**, after the project's name, [pycal.org](https://pycal.org)
+(the GitHub organisation is `pycalendar` only because `pycal` was taken),
+not `X-CALENDARING-`:
 
-- `plann` and other pycalendar tools will write the same properties, and an
-  organisation prefix is not wrong for them;
+- `plann` and the other pycal tools will write the same properties, and a
+  project prefix is not wrong for them;
 - the package name may change (see the top of this document), and once
   written into users' calendars a prefix cannot.
 
-In this document: `X-PYCALENDAR-PLANNED-START`, `X-PYCALENDAR-PLANNED-END`,
-`X-PYCALENDAR-LOGIN` (parameter). [roadmap 1.6](ROADMAP.md#16-time-tracking-model-and-api) adds its own. Each gets a line in a
+In this document: `X-PYCAL-PLANNED-START`, `X-PYCAL-PLANNED-END`.
+[roadmap 1.6](ROADMAP.md#16-time-tracking-model-and-api) adds its own. Each gets a line in a
 registry table in the user documentation ([roadmap 4.1](ROADMAP.md#41-documentation-structure-and-api-reference)), with the standard property
 that would replace it if one appears.
 
 ### 3.7 Recurrence
 
+**Words.** A *recurring* object is one with an `RRULE` or `RDATE`. An
+*occurrence* is one instance of it: the Wednesday 10:00 meeting on one
+particular Wednesday, identified by its `RECURRENCE-ID`. RFC 5545 calls an
+occurrence a "recurrence instance", and caldav calls it a "recurrence"
+(`save(only_this_recurrence=…)`). This document says "occurrence" because
+"recurrence" also means the repetition itself (the rule, "the recurrence
+set"), and the two senses get mixed up.
+
 `search(..., expand=True)` returns occurrences: items with `is_occurrence`
 set and `recurrence_id` filled in, expanded by `recurring_ical_events` via
-`icalendar-searcher`. **Occurrences are read-only in the funded scope:**
-`save` on one raises `UnsupportedError(Feature.EDIT_OCCURRENCE)`. Editing
-"this occurrence" or "this and future" is hard, `ical`'s `store.py` is the
-reference for it ([prior art §1.3, `ical`](PRIOR_ART_AND_DECISIONS.md#13-ical-allen-porter)), and by [D1](PRIOR_ART_AND_DECISIONS.md#d1-packaging-principle) it belongs in a standalone package,
-not here. To change an occurrence today the caller edits the master with
-`get(uid)` and adds an override component to its `icalendar` object. The
-one recurring operation that is supported is `complete()` ([§2.3 Collection](#23-collection)).
+`icalendar-searcher`.
+
+**Editing one occurrence works as it does in caldav.** `save(occurrence)`
+fetches the master, inserts or replaces the override component for that
+`RECURRENCE-ID`, bumps `SEQUENCE` and saves the whole object. That is what
+caldav's `save(only_this_recurrence=True)`, its default, does, and what the
+recurring-ical-events user guide shows ("Edit one event of an existing
+series"). `save(occurrence, scope=Scope.ALL)` (`class Scope(Enum)` with
+`THIS`, `ALL` and `THIS_AND_FUTURE`; default `THIS`) applies the change to the
+master instead, which is caldav's `all_recurrences=True`. The merge is
+`icalendar` manipulation with no I/O, so it works the same on every backend
+that stores `RRULE` (`recurrence` capability). Backends that do not
+(Gitea) never produce occurrences.
+
+**Not supported: "this and future" for events**, which splits a series in
+two. caldav does not offer it either, `ical`'s `store.py` is the reference
+for it ([prior art §1.3, `ical`](PRIOR_ART_AND_DECISIONS.md#13-ical-allen-porter)),
+and by [D1](PRIOR_ART_AND_DECISIONS.md#d1-packaging-principle) it belongs in a
+package of its own. `save(occurrence, scope=Scope.THIS_AND_FUTURE)` raises
+`UnsupportedError(Feature.RECURRENCE_EDIT_THIS_AND_FUTURE)` until one exists.
+
+**Completing one occurrence of a recurring task** is `complete(task,
+mode=...)` with caldav's two modes, `safe` and `this_and_future`. (caldav
+declares `"this_and_future"` but only accepts `"thisandfuture"`: it looks
+up `_complete_recurring_<mode>`, and that method is spelled
+`_complete_recurring_thisandfuture`. The CalDAV backend passes the working
+spelling, and the mismatch is reported as
+[caldav issue 735](https://github.com/python-caldav/caldav/issues/735).)
+([§2.3 Collection](#23-collection)). Where that code should live is
+[§10 Open questions](#10-open-questions), Q3.
+
+[§9 Migrating from caldav](#9-migrating-from-caldav) compares the whole of
+caldav's API with this one.
 
 ---
 
@@ -485,8 +560,11 @@ Consequences:
 **Risk:** the README of `icalendar-searcher` says that `filter`,
 `filter_calendar` and `sort_calendar` are AI-generated and covered only by
 AI-generated tests. caldav uses `check_component` and `sort`. The
-post-filter can be built on `check_component` alone; [roadmap 1.2](ROADMAP.md#12-abstract-base-classes-and-the-backend-conformance-suite) should not assume
-`filter` is correct.
+post-filter needs these methods to be trustworthy, so a thorough review of
+them, and the removal of the disclaimers, is requested in
+[icalendar-searcher issue 15](https://github.com/pycalendar/icalendar-searcher/issues/15). Until that is done,
+[roadmap 1.2](ROADMAP.md#12-abstract-base-classes-and-the-backend-conformance-suite)
+builds the post-filter on `check_component`.
 
 **How it fits Gitea:** its issue search API takes state, labels, a
 milestone and a since-timestamp. The backend translates `todo=True,
@@ -508,10 +586,38 @@ class Support(Enum):
     UNSUPPORTED = "unsupported"  # raises UnsupportedError
     UNKNOWN = "unknown"          # not probed; the operation is attempted
 
-class Capabilities(Mapping[Feature, Support]):
-    def supports(self, feature: Feature, *, allow_lossy: bool = False) -> bool: ...
-    def level(self, feature: Feature) -> Support: ...
+@dataclass(frozen=True)
+class Capability:
+    level: Support
+    details: Mapping[str, Any] = field(default_factory=dict)  # how it is supported; keys per feature
+    note: str | None = None               # free text for the capability matrix
+
+class Capabilities(Mapping[Feature, Capability]):
+    def supports(self, feature: Feature, *, allow_lossy: bool = False) -> bool: ...  # the boolean view
+    def level(self, feature: Feature) -> Support: ...                              # the string view
+    def details(self, feature: Feature) -> Mapping[str, Any]: ...                  # the full view
 ```
+
+**A yes/no answer is not enough, and neither is a level alone.** That is
+caldav's experience with its compatibility matrix, where a value is a
+boolean, a string or a dict, and helper methods reduce a dict to a boolean
+or a string for code that only cares about that. This is the same idea with
+a fixed shape. Every entry has a level, which callers branch on, and an
+optional `details` mapping for how a feature is supported. For example:
+
+| Feature | Level | `details` |
+|---|---|---|
+| `task.priority` on Taskwarrior | `LOSSY` | `{"values": [1, 5, 9]}` (H/M/L) |
+| `task.status` on Gitea | `LOSSY` | `{"values": ["NEEDS-ACTION", "COMPLETED"]}` |
+| `changes` on CalDAV without sync-token | `EMULATED` | `{"method": "etag-listing"}` |
+| `search.time-range` on a CalDAV server that ignores it for tasks | `EMULATED` | `{"components": ["VEVENT"]}` |
+
+In configuration files a capability can be given in the same three shapes
+caldav accepts, `true`/`false`, a level string, or a dict with `level` and
+the details, and is normalised to a `Capability` on load. The details keys
+are documented per feature, so the capability matrix (roadmap 4.3) can
+print them, and the conformance suite can use them. For example, it
+asserts that a `LOSSY` priority comes back as one of the declared `values`.
 
 `Feature` is a `StrEnum` with dotted values, so that it can be written
 in configuration files and in the generated capability matrix ([roadmap 4.3](ROADMAP.md#43-backend-capability-matrix)). The
@@ -527,20 +633,20 @@ initial set:
 | `write.conditional` | `FULL` with an atomic precondition (ETag, `content_version`); `EMULATED` read-compare-write |
 | `identity.client-uid`, `identity.foreign-id` | [§3.2 Identity](#32-identity) |
 | `properties.passthrough` | unknown properties and components survive a round trip |
-| `recurrence`, `recurrence.edit-occurrence` | stores `RRULE`; [§3.7 Recurrence](#37-recurrence) |
+| `recurrence`, `recurrence.edit-this-and-future` | stores `RRULE`; [§3.7 Recurrence](#37-recurrence) |
 | `move` | [§2.3 Collection](#23-collection) |
 | `task.status`, `task.priority`, `task.percent-complete` | `LOSSY` when values are mapped |
 | `task.start`, `task.due`, `task.completed`, `task.planned`, `task.estimate` | |
 | `task.relations.parent`, `task.relations.depends-on` | |
-| `task.categories`, `task.assignees` | |
+| `categories`, `attendees` | for every component; on a task, attendees are its assignees |
 
 [roadmap 1.6](ROADMAP.md#16-time-tracking-model-and-api) adds `task.time-log` and friends. The list is closed per release: the
 conformance suite iterates over `Feature`, and a backend's declaration must
 cover every member (missing = test failure, not a silent default).
 
 It is a table rather than an `IntFlag` like Home Assistant's, because a
-flag is yes/no and the survey's most common answer is "yes, lossily". It is
-smaller than caldav's `FeatureSet`, which describes *servers* (including
+flag is yes/no and the survey's most common answer is "yes, lossily". It has
+fewer levels than caldav's `FeatureSet`, which describes *servers* (including
 fragile, broken and ungraceful ones) for the client's workarounds. The CalDAV
 backend derives this table from caldav's: `full`/`quirk` → `FULL`; anything
 caldav works around client-side → `EMULATED`; `unsupported`, `broken`,
@@ -564,7 +670,8 @@ Three cases, matching the roadmap's "raise, degrade, or emulate":
 - **Unsupported operation → raise, before I/O.** `UnsupportedError`
   carries the `Feature`. Checked at the boundary, as Home Assistant does
   with its service-call validation, so nothing is half done.
-- **Lossy write → depends on `LossPolicy`, default `RAISE`.** The backend's
+- **Lossy write → depends on `LossPolicy`** (`class LossPolicy(Enum)`:
+  `RAISE`, `WARN`, `ALLOW`), **default `RAISE`.** The backend's
   mapper runs before the write is sent and returns a list of what it could
   not store (a priority of 3 on a backend with three levels, a fourth
   status, a `DEPENDS-ON` to Gitea's API version without dependencies).
@@ -583,7 +690,7 @@ What the library cannot catch: a server that declares `UNKNOWN` and then
 silently drops a property. caldav's hints call that `unsupported`; only a
 probe (caldav-server-tester) or a read-back finds it. A `verify=True` on
 `save` that reloads and compares is possible and cheap to add; it is left
-out until someone needs it ([§9 Open questions](#9-open-questions), Q4).
+out until someone needs it ([§10 Open questions](#10-open-questions), Q4).
 
 ---
 
@@ -642,7 +749,7 @@ Adopts vdirsyncer's contract ([prior art §1.2, vdirsyncer](PRIOR_ART_AND_DECISI
 | files, single `.ics` | hash of the item's serialisation | `EMULATED` |
 | feed | hash of the item's serialisation | n/a (read-only) |
 | JMAP | the object's state | per `calendaring-jmap` |
-| Gitea | `content_version`, plus `updated_at` | `FULL` for the body, `EMULATED` for the rest ([§9 Open questions](#9-open-questions), Q6) |
+| Gitea | `content_version`, plus `updated_at` | `FULL` for the body, `EMULATED` for the rest ([§10 Open questions](#10-open-questions), Q6) |
 
 **Every collection answers `changes(token)`:**
 
@@ -651,7 +758,7 @@ Adopts vdirsyncer's contract ([prior art §1.2, vdirsyncer](PRIOR_ART_AND_DECISI
 class ChangeSet:
     changed: list[CalendarObject]       # new or modified since token
     deleted: list[str]                  # uids
-    token: SyncToken                    # opaque str; persist it and pass it back
+    token: SyncToken                    # SyncToken = NewType("SyncToken", str); opaque, persist it and pass it back
 
 cs = await cal.changes()                # everything, plus a token
 cs = await cal.changes(cs.token)        # what changed since
@@ -700,40 +807,149 @@ capability check, no loss check, and the item's `etag` is stale afterwards,
 so `reload()` it. The item's `native` is a snapshot from when it was read,
 not a live handle.
 
+The other direction also works: `collection.wrap(native_item)` turns a
+backend object (a `caldav.Todo`, say) into this library's item, without
+I/O. Together with `.native` that lets code use both libraries side by side,
+which is what a migration needs
+([§9 Migrating from caldav](#9-migrating-from-caldav)).
+
 ---
 
-## 9. Open questions
+## 9. Migrating from caldav
+
+What a caldav user keeps, what changes, and what is only reachable through
+the escape hatch ([§8 The escape hatch](#8-the-escape-hatch)). Taken from
+caldav's public API as of 2026-10-08 (caldav 3.4.0).
+
+| caldav | calendaring | |
+|---|---|---|
+| `get_davclient()`, `get_calendar(s)()`, config file | `Backend.connect()`, `Client.from_config()` | changed; same config file ([config proposal](CONFIGURATION_PROPOSAL.md)) |
+| `principal()`, `calendars()`, `make_calendar(supported_calendar_component_set=…)` | `backend.collections()`, `create_collection(components=…)` | same |
+| `get_supported_components()` | `collection.components` | same |
+| `search(…)`, `CalDAVSearcher` | `collection.search(…)` with a `Searcher` | same; caldav already post-filters client-side |
+| `search(…, server_expand=True)` | not a caller choice; the backend decides, the result is the same | escape hatch |
+| `get_object_by_uid()`, `event_by_uid()`, `todo_by_uid()` | `get(uid)` | same |
+| `event_by_url()` | `get_by_native_id(href)` | same |
+| `add_todo(summary=…)`, `save_todo(…)` | `add(Task.new(summary=…))` | changed: two steps |
+| `obj.save()`, `no_overwrite`, `no_create` | `collection.save(obj)`, `collection.add(obj)` | changed: I/O moved, create and update split |
+| ETag / Schedule-Tag preconditions on save | `etag` precondition, `ConflictError` | same; Schedule-Tag only through the escape hatch |
+| `obj.load()`, `obj.delete()` | `collection.reload(obj)`, `collection.delete(obj)` | changed: I/O moved |
+| `multiget()`, `load_by_multiget()` | used inside the backend | not a public call |
+| `icalendar_instance`, `edit_icalendar_component()` (borrowing) | `item.icalendar`, `item.component` | simpler: items are plain data, nothing to borrow |
+| `vobject_instance` | — | escape hatch (`item.native.vobject_instance`) |
+| `data`, `wire_data` | `item.icalendar.to_ical()` | same |
+| `search(expand=True)` | `search(expand=True)` | same |
+| `save(only_this_recurrence=True)` (default) | `save(occurrence)` | same ([§3.7 Recurrence](#37-recurrence)) |
+| `save(all_recurrences=True)` | `save(occurrence, scope=Scope.ALL)` | same |
+| `save(only_this_recurrence=None / False)` | — | escape hatch |
+| `expand_rrule(start, end)` on an object | `search(expand=True)`, or `recurring_ical_events` directly | changed |
+| "this and future" for events | — | missing in both |
+| `complete(handle_rrule=True, rrule_mode=…)` | `complete(task, mode=…)` | same modes |
+| `complete()` on a recurring task, default `handle_rrule=False` | `complete(task)` handles the `RRULE` (`mode="safe"`) | **behaviour change**: caldav completes the whole series by default |
+| `uncomplete()` | `collection.uncomplete(task)` | same |
+| `is_pending()` | `task.status` | changed: no helper |
+| `get_due()`, `get_duration()`, `set_duration(movable_attr=…)`, `get_dtend()`, `set_end()` | `task.due`, `task.duration`, `task.set_duration(keep=…)`, `event.end` | same, as attributes |
+| `set_due(due, move_dtstart=…, check_dependent=…)` | `task.due = …` | **not yet**: `move_dtstart` and `check_dependent` |
+| `set_relation()`, `get_relatives()` | `task.relations`, `collection.relatives()` | same |
+| `check_reverse_relations()`, `fix_reverse_relations()` | — | **not yet** |
+| `objects_by_sync_token()` | `collection.changes(token)` | same |
+| `save_with_invites()`, `accept_invite()`, `decline_invite()`, `change_attendee_status()`, `schedule_inbox()`, `freebusy_request()` | `attendees`, `organizer` as data only | escape hatch; scheduling (iTIP) is outside the funded scope |
+| `add_attendee()`, `add_organizer()` | `item.attendees.append(…)` | same, as data |
+| `propfind()`, `proppatch()`, `report()`, `mkcol()`, `request()` | — | escape hatch (`backend.native`) |
+| compatibility hints, `features:` profile | derived capabilities ([§5.1 The table](#51-the-table)); the profile stays in the config | same source |
+
+The two **not yet** rows are pure logic plus a relatives lookup, and fit
+in Phase 1 if plann needs them before roadmap 3.3. The behaviour change in
+`complete()` is deliberate: completing a whole series because the caller
+forgot a flag is the wrong default. caldav's own docstring says it may
+make the flag mandatory.
+
+### 9.1 A migration path for plann
+
+plann is the first program that has to move (roadmap 3.3). In its
+`plann/*.py` (`git grep -F` at plann 95fdab5, 2026-10-09) it calls
+`get_relatives(` 16 times, `.save(` 13, `get_duration(` 9, `get_due(` 7,
+`.complete(` 4 and `set_duration(` 4. A big-bang switch is not needed, because the two libraries
+share their data model (`icalendar` objects) and the escape hatch goes
+both ways:
+
+1. **Connect through calendaring, keep calling caldav.** plann gets its
+   collections from `Client.from_config()` (roadmap 1.4, which plann's
+   credential work already waits for) and uses `collection.native`, a
+   `caldav.Calendar`, everywhere else. Nothing else changes.
+2. **Move the reads:** search, `get`, `relatives`. Where plann still holds
+   caldav objects, `collection.wrap()` converts them.
+3. **Move the writes:** `add`, `save`, `complete`, with the `complete()`
+   default checked at every call site.
+4. **What is left is the gap list.** Every remaining `.native` call is a
+   row in the table above that plann needs, and either gets added here or
+   stays as a deliberate CalDAV-only feature.
+
+Progress is measurable: the number of `caldav` names plann uses directly.
+For the duration, plann depends on both libraries, which it does anyway,
+since calendaring depends on caldav.
+
+---
+
+## 10. Open questions
 
 For the author and for peer review. Each has a proposed answer; none blocks
 [roadmap 1.2](ROADMAP.md#12-abstract-base-classes-and-the-backend-conformance-suite) from starting.
 
 1. **Items without I/O (A1)** is the largest departure from caldav. It is
-   argued in [§1.1 Sync and async](#11-sync-and-async); a reviewer from the caldav user base should push back if
-   it is wrong.
-2. **`Client` at all?** It exists for the configuration file and for
-   fan-out. If [roadmap 1.4](ROADMAP.md#14-configuration-and-credentials) decides that a configuration file names one backend per
-   section, `Client` could shrink to a function returning a list of
-   backends.
+   argued in [§1.1 Sync and async](#11-sync-and-async). *Author,
+   2026-10-09: "I don't like it — but this is probably a necessary cost of
+   getting the async/sync schism right."* Accepted unless a peer reviewer
+   brings a better argument.
+2. **The name `Client`.** The author dislikes it ("could mean anything")
+   and suggested `CalendaringConfig`, `CalendaringCollection` and
+   `Calendaring`. What the object is: a set of backends, usually loaded from
+   configuration, with fan-out operations over them. The criteria: not an
+   HTTP word (client, session, connection), says "several sources", and
+   survives a package rename.
+
+   | Name | Verdict |
+   |---|---|
+   | `Client` | an HTTP word, and says nothing about "several" |
+   | `CalendaringConfig` | it does I/O, so it is more than a config |
+   | `CalendaringCollection` | clashes with `Collection`, which means a calendar here |
+   | `Calendaring` | reads well (`Calendaring.from_config()`), but breaks if the package is renamed |
+   | `Session` | requests/SQLAlchemy usage, but clashes with the HTTP session a backend owns |
+   | **`Workspace`** | "everything you have configured"; no clash; survives a rename |
+
+   **Proposal: `Workspace`.** Not applied in the text yet, so that the
+   author can still choose; renaming is a search and replace.
 3. **Where recurring-task completion lives.** caldav's `complete(handle_rrule=…)`
-   logic is not CalDAV protocol logic, and by [D1](PRIOR_ART_AND_DECISIONS.md#d1-packaging-principle) it does not belong in
-   `caldav`. The files backend needs it too. Proposal: call caldav's for
-   [roadmap 2.1](ROADMAP.md#21-caldav-backend), and move it to `icalendar` or a small package when [roadmap 2.2](ROADMAP.md#22-local-icalendar-file-backend) needs it,
-   rather than copying it.
+   logic, and the occurrence merge behind `save(only_this_recurrence=…)`,
+   are not CalDAV protocol logic, and by [D1](PRIOR_ART_AND_DECISIONS.md#d1-packaging-principle)
+   do not belong in `caldav`. The files backend needs them too. The author
+   does not want another package for a few hundred lines, and suggested
+   `recurring_ical_events`, which already documents editing one occurrence;
+   its maintainer asked for an issue with a proposed API. **Proposal:**
+   such an issue (drafted, not yet filed). Until it is settled, roadmap 2.1
+   calls caldav's code, and roadmap 2.2 waits for the outcome rather than
+   copying it.
 4. **`save(verify=True)`** ([§5.3 What happens when the caller asks for something unsupported](#53-what-happens-when-the-caller-asks-for-something-unsupported)): add now or when asked?
-5. **Assignee mapping** for trackers ([§3.4 Task](#34-task)): an `X-` parameter on
-   `ATTENDEE`, or a separate `X-PYCALENDAR-ASSIGNEE` property?
+5. *Resolved, 2026-10-09:* assignees are `ATTENDEE`s with the tracker's
+   profile URL as the calendar address; no `X-` property
+   ([§3.4 Task](#34-task)).
 6. **Gitea's `content_version`** covers the issue body; whether it also
-   changes on label, state or due-date edits has to be checked against a
-   running Gitea in [roadmap 2.5](ROADMAP.md#25-first-task-tracker-backend). If it does not, `write.conditional` is `EMULATED`
-   for those fields.
+   changes on label, state or due-date edits is checked in roadmap 2.5,
+   against a Gitea run as a CI service container (the official image with
+   SQLite needs a few hundred MB of RAM and no persistent host). This is a
+   task for 2.5, not a question for the author. A permanent instance is only
+   needed for dogfooding, and is optional.
 7. **Feature granularity.** The list in [§5.1 The table](#51-the-table) is what the funded backends
    need. It is closed per release (adding one is a minor version, since
    every backend must declare it); whether that is too rigid for
    third-party backends is a question for after 1.0.
+8. **The configuration file is shared by caldav, calendaring-jmap and this
+   library.** Where should its parser live? A proposal for the team is in
+   [CONFIGURATION_PROPOSAL.md](CONFIGURATION_PROPOSAL.md).
 
 ---
 
-## 10. Peer review
+## 11. Peer review
 
 Not started. The roadmap's warning applies: a review is a dependency on
 someone else's calendar.
@@ -747,10 +963,10 @@ someone else's calendar.
 | a vdirsyncer/pimsync maintainer | [§7 Change detection](#7-change-detection) adopts their contract | [§7 Change detection](#7-change-detection) |
 
 What the author needs to do: decide whom to approach, and send this
-document (or [§9 Open questions](#9-open-questions) alone) once the author's own review is done.
+document, or [§10 Open questions](#10-open-questions) alone; the author's own review is done.
 
 ---
 
 *Drafted with AI assistance (Claude Opus 5.5 via Claude Code) from the [roadmap 0.1](ROADMAP.md#01-task-and-issue-tracker-data-model)–[roadmap 0.3](ROADMAP.md#03-prior-art-standards-and-project-decisions)
 documents and the source of `caldav`, `icalendar` and `icalendar-searcher` as
-checked out on 2026-10-08. Partly reviewed by the author (see Status).*
+checked out on 2026-10-08 and 09. Reviewed by the author (see Status).*

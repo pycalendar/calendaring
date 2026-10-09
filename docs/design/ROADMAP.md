@@ -310,6 +310,8 @@ therefore has a committed downstream consumer and should not be trimmed.
 - [ ] Config file discovery (XDG paths, explicit path, environment)
 - [ ] Credential handling: keyring integration, and never requiring secrets in
       plaintext config
+- [ ] Settle the shared file with the caldav and calendaring-jmap
+      maintainers: see [CONFIGURATION_PROPOSAL.md](CONFIGURATION_PROPOSAL.md)
 - [ ] Check existing conventions first — `caldav`, `plann`, `vdirsyncer`, `khal`, etc — rather
       than inventing a fifth format (probably build on the caldav format)
 - [ ] Document the format
@@ -492,6 +494,8 @@ express this backend without contortion, the finding is more valuable than the c
 
 **Tasks:**
 - [ ] Implement the tracker recommended by 0.1
+- [ ] Run Gitea as a CI service container (official image, SQLite) for the
+      conformance suite; a permanent instance is optional, for dogfooding
 - [ ] Auth, pagination and rate limiting for that tracker's API
 - [ ] Map its task model to the library's, and record every lossy mapping
 - [ ] Pass the conformance suite, with unsupported operations failing as specified
