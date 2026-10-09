@@ -245,14 +245,20 @@ argument is not mutated.
 
 **`complete`** is an I/O method because completing a recurring task may
 write two objects: caldav's "safe" mode completes a copy of the occurrence
-and moves the master's `DTSTART`. The modes are caldav's, with the same
-meaning.
+and moves the master's `DTSTART`. The modes are caldav's, with one
+exception: caldav guesses that an `RRULE` without `BY*` parts means "an
+interval after the actual completion" (org-mode's `.+1w`). That reads into
+`RRULE` something the RFC does not say, and is dropped. The next start
+follows the `RRULE`, and the interval-from-completion behaviour applies only
+when an `X-` property asks for it
+([recurring-ical-events issue 292](https://github.com/niccokunzmann/python-recurring-ical-events/issues/292)).
+Where that logic should live is
+[§10 Open questions](#10-open-questions), Q3.
 
 **`relatives`** fetches the objects an item's `RELATED-TO` points at (and,
 for `PARENT`, the children pointing back), as caldav's `get_relatives()`
 does. plann calls it 16 times, so it has to be here. Relatives outside
-this collection are looked up across the backend. Where that logic should live is an open
-question ([§10 Open questions](#10-open-questions), Q3).
+this collection are looked up across the backend.
 
 **`move`** within one backend uses its own move where it has one
 (CalDAV `MOVE`); between backends it is `add` to the target, then `delete`
@@ -844,7 +850,7 @@ caldav's public API as of 2026-10-08 (caldav 3.4.0).
 | `save(only_this_recurrence=None / False)` | — | escape hatch |
 | `expand_rrule(start, end)` on an object | `search(expand=True)`, or `recurring_ical_events` directly | changed |
 | "this and future" for events | — | missing in both |
-| `complete(handle_rrule=True, rrule_mode=…)` | `complete(task, mode=…)` | same modes |
+| `complete(handle_rrule=True, rrule_mode=…)` | `complete(task, mode=…)` | same modes; caldav's "interval from completion" guess is dropped |
 | `complete()` on a recurring task, default `handle_rrule=False` | `complete(task)` handles the `RRULE` (`mode="safe"`) | **behaviour change**: caldav completes the whole series by default |
 | `uncomplete()` | `collection.uncomplete(task)` | same |
 | `is_pending()` | `task.status` | changed: no helper |
@@ -926,9 +932,12 @@ For the author and for peer review. Each has a proposed answer; none blocks
    does not want another package for a few hundred lines, and suggested
    `recurring_ical_events`, which already documents editing one occurrence;
    its maintainer asked for an issue with a proposed API. **Proposal:**
-   such an issue (drafted, not yet filed). Until it is settled, roadmap 2.1
+   [recurring-ical-events issue 292](https://github.com/niccokunzmann/python-recurring-ical-events/issues/292). Until it is settled, roadmap 2.1
    calls caldav's code, and roadmap 2.2 waits for the outcome rather than
-   copying it.
+   copying it. That means the CalDAV backend keeps caldav's "interval after
+   completion" guess for an `RRULE` without `BY*` parts until then: a
+   known deviation from [§2.3 Collection](#23-collection), listed in the
+   capability matrix.
 4. **`save(verify=True)`** ([§5.3 What happens when the caller asks for something unsupported](#53-what-happens-when-the-caller-asks-for-something-unsupported)): add now or when asked?
 5. *Resolved, 2026-10-09:* assignees are `ATTENDEE`s with the tracker's
    profile URL as the calendar address; no `X-` property
