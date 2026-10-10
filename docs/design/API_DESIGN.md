@@ -2,24 +2,15 @@
 
 **Roadmap item:** [1.1 Unified API design and peer review](ROADMAP.md#11-unified-api-design-and-peer-review)
 
-**Status:** draft by Claude Opus 5.5, 2026-10-08. Reviewed by the author on
-2026-10-08 and 09, comments applied; not yet peer-reviewed ([§11 Peer review](#11-peer-review)).
+**Status:** draft by Claude Opus 5.5, 2026-10-08. Reviewed and edited by the author on the following days, and his comments applied. The A1 rework (2026-10-10) awaits his confirmation ([§10 Open questions](#10-open-questions), Q1). Not yet peer-reviewed ([§11 Peer review](#11-peer-review)).
 
-**Inputs:** [0.1 task model survey](TASK_MODEL_SURVEY.md),
-[0.2 sync/async decision](SYNC_ASYNC_ARCHITECTURE.md#11-decision),
-[0.3 decisions D1–D7](PRIOR_ART_AND_DECISIONS.md#part-3-project-decisions)
+**Inputs:** [0.1 task model survey](TASK_MODEL_SURVEY.md), [0.2 sync/async decision](SYNC_ASYNC_ARCHITECTURE.md#11-decision), [0.3 decisions D1–D7](PRIOR_ART_AND_DECISIONS.md#part-3-project-decisions)
 
-**Consumers:** [roadmap 1.2](ROADMAP.md#12-abstract-base-classes-and-the-backend-conformance-suite) writes the conformance suite against this document, [roadmap 1.3](ROADMAP.md#13-syncasync-scaffolding)
-generates the sync copy of what it calls async, [roadmap 1.6](ROADMAP.md#16-time-tracking-model-and-api) adds the time log to the
-task model in [§3.4 Task](#34-task).
+**Consumers:** [roadmap 1.2](ROADMAP.md#12-abstract-base-classes-and-the-backend-conformance-suite) writes the conformance suite against this document, [roadmap 1.3](ROADMAP.md#13-syncasync-scaffolding) generates the sync copy of what it calls async, [roadmap 1.6](ROADMAP.md#16-time-tracking-model-and-api) adds the time log to the task model in [§3.4 Task](#34-task).
 
-The test the roadmap sets: does it fit CalDAV *and* a Gitea issue tracker
-without lying about either? Each section ends with how it does that.
+The test the roadmap sets: does it fit CalDAV *and* a Gitea issue tracker without lying about either? Each section ends with how it does that.
 
-Import names below say `calendaring`. The name may still change (see the
-note under [roadmap 0.3](ROADMAP.md#03-prior-art-standards-and-project-decisions)); nothing in the design depends on it, and the one
-place where a name is written into user data, the `X-` prefix ([§3.6 Properties with no standard home](#36-properties-with-no-standard-home)), is
-deliberately not the package name.
+Import names below say `calendaring`. The name may still change (see the note under [roadmap 0.3](ROADMAP.md#03-prior-art-standards-and-project-decisions)); nothing in the design depends on it, and the one place where a name is written into user data, the `X-` prefix ([§3.6 Properties with no standard home](#36-properties-with-no-standard-home)), is deliberately not the package name.
 
 ---
 
@@ -27,7 +18,7 @@ deliberately not the package name.
 
 | # | Decision | Section |
 |---|---|---|
-| A1 | Items (events, tasks, journals) are plain data, the same class in sync and async code. I/O lives on `Collection`, `Backend` and `Workspace`, which come in a sync and an async version. | [§1 Layers and modes](#1-layers-and-modes), [§2 The I/O classes](#2-the-io-classes) |
+| A1 | *(Proposal.)* Items (events, tasks, journals) are mode-free data classes, with a bound subclass per mode (`AsyncTask`, `SyncTask`) that adds `save()`, `complete()` and the like by delegating to its collection. `Collection`, `Backend` and `Workspace` come in a sync and an async version. | [§1 Layers and modes](#1-layers-and-modes), [§2 The I/O classes](#2-the-io-classes) |
 | A2 | An item is a typed view over an `icalendar.Calendar`, delegating to `icalendar`'s own typed properties wherever they exist. | [§3 Items](#3-items) |
 | A3 | Search takes an `icalendar_searcher.Searcher`. The server may filter, but only ever *more loosely*; the client always re-filters. Results are therefore identical on every backend by construction. | [§4 Search](#4-search) |
 | A4 | Capabilities are a typed table per collection: feature → support level (`FULL`, `LOSSY`, `EMULATED`, `UNSUPPORTED`, `UNKNOWN`). | [§5 Capabilities](#5-capabilities) |
@@ -43,9 +34,9 @@ deliberately not the package name.
 
 ```
 Workspace ──< Backend ──────< Collection ──────────< item: Event | Task | Journal
-(config,      (one store:      (calendar, task list,  (plain data over
- fan-out)      server, dir,     repo, directory,       icalendar.Calendar)
-               file, feed)      feed)
+(config,      (one store:      (calendar, task list,  (data over
+ fan-out)      server, dir,     repo, directory,       icalendar.Calendar,
+               file, feed)      feed)                  bound per mode)
 ```
 
 - **Workspace** — a set of backends, usually all the ones a configuration
@@ -64,10 +55,11 @@ Workspace ──< Backend ──────< Collection ───────�
   `CalendarObject`. One item is one iCalendar object resource: all
   components with one `UID` (the master and its overridden occurrences).
 
-"Collection" rather than "Calendar" because a Gitea repository is not a
-calendar, and a CalDAV user loses nothing by the word. "Task" rather than
-caldav's "Todo" because the trackers say task or issue, and only iCalendar
-says to-do.
+"Collection" rather than "Calendar" because a Gitea repository is not
+a calendar.  "Collection" is also used in the CalDAV RFC, as a
+calendar is a WebDAV collection, so a CalDAV user loses nothing by the
+word. "Task" rather than caldav's "Todo" because the trackers say task
+or issue, and only iCalendar says to-do.
 
 "Backend" rather than "Account" or a per-backend "Client" (as in caldav's
 `DAVClient`), because a directory or a single `.ics` file has neither an
@@ -83,33 +75,98 @@ configured (chosen by the author, 2026-10-09; see
 
 ### 1.1 Sync and async
 
-Under p4 the async classes are the source and the sync classes are
+It's been decided ([0.2 decision](SYNC_ASYNC_ARCHITECTURE.md#11-decision)) that the async classes are the source and the sync classes are to be
 generated. The public names follow httpx's pattern: `Workspace` / `AsyncWorkspace`,
 `Backend` / `AsyncBackend`, `Collection` / `AsyncCollection`, all importable
 from `calendaring`. That costs one replacement-map entry per class in [roadmap 1.3](ROADMAP.md#13-syncasync-scaffolding)'s
-generator (unasync would otherwise produce `SyncWorkspace`), which [roadmap 1.3](ROADMAP.md#13-syncasync-scaffolding) already
-lists.
+generator (unasync would otherwise produce `SyncWorkspace`).
 
-**Items are not generated and have no async twin (A1).** They do no I/O.
-`task.complete()` does not exist; `collection.complete(task)` does. Reasons:
+**Items: plain data, plus a bound twin per mode (A1).** An earlier draft
+made items pure data with no I/O at all: `collection.complete(task)`, never
+`task.complete()`. The author's review knocked out most of its arguments,
+and this is the reworked version.
 
-1. **One `Task` type in both modes.** A helper that formats or validates a
-   task works for sync and async callers alike. With mode-specific items
-   (`Task`, `AsyncTask`) every such helper is written twice, or typed
-   against a protocol, which is the duplication [roadmap 0.2](ROADMAP.md#02-syncasync-architecture) existed to avoid.
-2. **No back reference to an I/O object inside data.** caldav's
-   `CalendarObjectResource` holds its client; that is how its dual-mode
-   methods came to return `Self | Coroutine`, the "annotations that lie"
-   that [roadmap 0.2](ROADMAP.md#02-syncasync-architecture) started from.
-3. **Items can be built before there is anywhere to put them**
-   (`Task.new(summary=...)`), compared, copied and pickled, and moved to
-   another backend without dragging a session along.
-4. **The cache-then-sync backends (local files, [roadmap 2.2](ROADMAP.md#22-local-icalendar-file-backend)) fit it naturally.**
+*Arguments for data-only items, re-examined:*
 
-The cost is familiarity: a caldav user writes `todo.complete()` and
-`event.save()`; here it is `cal.complete(todo)` and `cal.save(event)`. The
-method names are kept from caldav where the meaning is the same, so the
-change is in where the method lives, not what it is called.
+1. **"One `Task` type in both modes."** This is not about duplicated code
+   in this library, since unasync would generate an `AsyncTask`'s sync twin
+   like everything else. It is about type identity for the library's
+   *users*. A plann helper annotated `def fmt(t: Task)` does not accept an
+   `AsyncTask`, because they are different classes. That holds for `Event`
+   and `Journal` just as much; nothing here is task-specific. It is real,
+   but it does not need data-only items: a shared mode-free base class that
+   helpers annotate against solves it (below).
+2. **"No back reference to an I/O object."** This does not hold under
+   unasync. caldav's problem was *dual-mode* methods returning
+   `Self | Coroutine`, not the back reference. A generated `AsyncTask`
+   holding an `AsyncCollection`, and a `SyncTask` holding a sync
+   `Collection`, are each typed correctly.
+3. **"Items can be built before there is anywhere to put them."** Moot, as
+   the author pointed out: caldav does it with `client=None`.
+4. **"Cache-then-sync backends fit it naturally."** Weak. A bound `save()`
+   that delegates to its collection fits them just as well.
+
+*Arguments for items that do I/O (`task.save()`, `task.complete()`):*
+
+- **The item knows where it lives.** `Workspace.search` returns items from
+  many collections. With data-only items, saving one means looking up
+  `workspace.collection(item.collection_id)` first. This is the strongest
+  argument, and the earlier draft missed it.
+- **Familiarity and migration.** caldav users write `todo.complete()` and
+  `event.save()`. plann's 13 `.save(` and 4 `.complete(` call sites
+  ([§9.1](#91-a-migration-path-for-plann)) stay as they are.
+- **It reads naturally**, and an editor's completion finds the operations
+  on the object.
+
+*What still speaks for keeping a mode-free data class:* an item fetched by
+sync code can be handed to async code, or to another backend, without
+carrying the wrong session along. It can be compared, copied and pickled
+without a live session inside it. And helpers can be written once (point 1
+above).
+
+**Decision (proposal, after the author's review on 2026-10-10): both.**
+
+- `CalendarObject`, `Event`, `Task` and `Journal` are the mode-free data
+  classes of [§3 Items](#3-items). Constructors (`Task.new(...)`) make
+  these, and helpers annotate against them.
+- `AsyncEvent`, `AsyncTask` and `AsyncJournal` subclass them, hold the
+  `AsyncCollection` they came from, and add `save()`, `delete()`,
+  `reload()`, `relatives()`, and for tasks `complete()` and `uncomplete()`.
+  Each one delegates to the collection method of the same name. unasync
+  generates the sync twins, `SyncEvent`, `SyncTask` and `SyncJournal`.
+  Those keep unasync's default name, because the unprefixed name belongs
+  to the data class that most code touches.
+- Every collection method that returns items returns the bound class for
+  its own mode. `collection.bind(item)` returns a copy of any item bound to
+  that collection, which is how an item crosses modes or backends.
+- The collection methods stay as they are, and are the primitive. A bound
+  method calls its collection's method and then updates the item in place
+  (see [§2.3 Collection](#23-collection)).
+- `item.as_data()` returns the mode-free copy, with no collection inside.
+  That is the step that makes the points above true: a fetched item is
+  bound, and it crosses to the other mode, goes into a pickle, or moves to
+  another backend through `as_data()` or `bind()`.
+- Placement under unasync: the data classes are hand-written outside
+  `_async/` and shared by both modes. The bound classes live in `_async/`,
+  and unasync's default `AsyncX` → `SyncX` rename produces the sync ones
+  with no replacement-map entry.
+
+Cost: two more classes per item type, and two ways to save. The bound
+method is the thin one, so the two cannot disagree.
+
+**A naming asymmetry, open for review.** The I/O classes follow httpx: the
+sync one is unprefixed (`Collection` / `AsyncCollection`). For items, the
+unprefixed name goes to the data class, and the sync bound class is
+`SyncTask`. A reader who generalises from `Collection` will take `Task` to
+be the sync bound class, and `AsyncTask` also reads like `asyncio.Task`.
+The alternative is `TaskData` for the data class and `Task` / `AsyncTask`
+for the bound ones, at one replacement-map entry per class.
+[§10 Open questions](#10-open-questions), Q10.
+
+**Mirroring one item to several backends** (the author's suggestion: an item
+that references a list of backends, so that `save()` pushes to all of them)
+is in [§10 Open questions](#10-open-questions), Q9. In short: it is a sync
+engine, and this proposal keeps the door open without building one.
 
 Lifecycle: `Workspace` and `Backend`, which own sessions, are context
 managers (`with` / `async with`) and have `close()`, awaited in async mode.
@@ -126,8 +183,9 @@ unasync's table; [roadmap 0.2](ROADMAP.md#02-syncasync-architecture) did not pro
 
 ## 2. The I/O classes
 
-Signatures are given in their async form; the sync form is identical
-without `async`/`await`. Types not defined here are in [§3 Items](#3-items)–[§7 Change detection](#7-change-detection).
+Signatures are given in their async form. The sync form is the same
+without `async`/`await`, with `AsyncX` renamed to `SyncX` for items and to
+the unprefixed name for the I/O classes. Types not defined here are in [§3 Items](#3-items)–[§7 Change detection](#7-change-detection).
 
 ### 2.1 Workspace
 
@@ -141,7 +199,7 @@ class AsyncWorkspace:
 
     async def collections(self) -> MultiResult[AsyncCollection]: ...
     async def collection(self, name_or_id: str) -> AsyncCollection: ...   # NotFoundError, AmbiguousError
-    async def search(self, searcher: Searcher | None = None, **filters: Any) -> MultiResult[CalendarObject]: ...
+    async def search(self, searcher: Searcher | None = None, **filters: Any) -> MultiResult[AsyncCalendarObject]: ...
     # MultiResult[T]: dataclass with items: list[T], errors: Mapping[str, CalendaringError], raise_for_errors()
     async def close(self) -> None: ...
 ```
@@ -197,6 +255,9 @@ class AsyncBackend:
 
 ```python
 class AsyncCollection:
+    # Items taken as arguments may be any CalendarObject (data or bound, either mode);
+    # items returned are bound to this collection. add, save, reload and move are
+    # overloaded per item type exactly as bind() is: Task -> AsyncTask, and so on.
     id: str
     backend_id: str
     name: str | None
@@ -206,29 +267,39 @@ class AsyncCollection:
     native: object
 
     # reading
-    async def search(self, searcher: Searcher | None = None, **filters: Any) -> list[CalendarObject]: ...
-    def iter_search(self, searcher: Searcher | None = None, **filters: Any) -> AsyncIterator[CalendarObject]: ...
-    async def tasks(self, **filters: Any) -> list[Task]: ...           # search(todo=True, ...)
-    async def events(self, **filters: Any) -> list[Event]: ...
-    async def journals(self, **filters: Any) -> list[Journal]: ...
-    async def get(self, uid: str) -> CalendarObject: ...                # NotFoundError
-    async def get_by_native_id(self, native_id: str) -> CalendarObject: ...
-    async def reload(self, item: T) -> T: ...                           # fresh copy, new etag
-    async def relatives(self, item: CalendarObject, reltype: str | None = None) -> list[CalendarObject]: ...
+    async def search(self, searcher: Searcher | None = None, **filters: Any) -> list[AsyncCalendarObject]: ...
+    def iter_search(self, searcher: Searcher | None = None, **filters: Any) -> AsyncIterator[AsyncCalendarObject]: ...
+    async def tasks(self, **filters: Any) -> list[AsyncTask]: ...      # search(todo=True, ...)
+    async def events(self, **filters: Any) -> list[AsyncEvent]: ...
+    async def journals(self, **filters: Any) -> list[AsyncJournal]: ...
+    async def get(self, uid: str) -> AsyncCalendarObject: ...           # NotFoundError
+    async def get_by_native_id(self, native_id: str) -> AsyncCalendarObject: ...
+    async def reload(self, item: CalendarObject) -> AsyncCalendarObject: ...   # fresh copy, new etag
+    async def relatives(self, item: CalendarObject, reltype: str | None = None) -> list[AsyncCalendarObject]: ...
 
     # writing
-    async def add(self, item: T, *, loss: LossPolicy | None = None) -> T: ...
-    async def save(self, item: T, *, overwrite: bool = False, scope: Scope = Scope.THIS,
-                   loss: LossPolicy | None = None) -> T: ...      # scope: occurrences only, §3.7
+    async def add(self, item: CalendarObject, *, loss: LossPolicy | None = None) -> AsyncCalendarObject: ...
+    async def save(self, item: CalendarObject, *, overwrite: bool = False, scope: Scope = Scope.THIS,
+                   loss: LossPolicy | None = None) -> AsyncCalendarObject: ...   # scope: occurrences only, §3.7
     async def delete(self, item: CalendarObject | str, *, overwrite: bool = False) -> None: ...
     async def complete(self, task: Task, at: datetime | None = None,
-                       mode: Literal["safe", "this_and_future"] = "safe") -> Task: ...
-    def wrap(self, native_item: object) -> CalendarObject: ...         # no I/O; see "The escape hatch"
-    async def uncomplete(self, task: Task) -> Task: ...
-    async def move(self, item: T, target: AsyncCollection) -> T: ...
+                       mode: Literal["safe", "this_and_future"] = "safe") -> AsyncTask: ...
+    async def uncomplete(self, task: Task) -> AsyncTask: ...
+    async def move(self, item: CalendarObject, target: AsyncCollection) -> AsyncCalendarObject: ...   # bound to target
+
+    # binding, no I/O
+    def wrap(self, native_item: object) -> AsyncCalendarObject: ...    # see "The escape hatch"
+    @overload
+    def bind(self, item: Task) -> AsyncTask: ...
+    @overload
+    def bind(self, item: Event) -> AsyncEvent: ...
+    @overload
+    def bind(self, item: Journal) -> AsyncJournal: ...
+    @overload
+    def bind(self, item: CalendarObject) -> AsyncCalendarObject: ...
 
     # change detection
-    async def changes(self, token: SyncToken | None = None) -> ChangeSet: ...
+    async def changes(self, token: SyncToken | None = None) -> ChangeSet[AsyncCalendarObject]: ...
 
     async def delete_collection(self) -> None: ...
 ```
@@ -240,10 +311,15 @@ changed since it was read; `overwrite=True` drops the precondition. caldav's
 `save()` that does either is convenient and is how lost updates happen; the
 split costs one method name.
 
-**Writes return the stored item, and the caller must use it.** The returned
-copy has the new `etag`, and on a backend that cannot store a
-caller-chosen UID (Gitea, [§3.2 Identity](#32-identity)) a different `uid` and a `native_id`. The
-argument is not mutated.
+**Collection writes return the stored item; bound methods update in
+place.** `collection.save(item)` and the other collection writes return a new
+bound copy with the new `etag`, and, on a backend that cannot store a
+caller-chosen UID (Gitea, [§3.2 Identity](#32-identity)), a different `uid`
+and a `native_id`. They do not change their argument, which may be a data
+item or belong to another collection. A bound item's own methods
+(`task.save()`, `task.complete()`, `task.reload()`) update the item itself
+with those values, as caldav's do, so `task.save(); ...; task.save()` works
+without a stale etag.
 
 **`complete`** is an I/O method because completing a recurring task may
 write two objects: caldav's "safe" mode completes a copy of the occurrence
@@ -312,6 +388,38 @@ properties** — `Todo.DUE`, `Todo.start`, `Todo.duration`, `uid`,
 `item.icalendar` directly sees the change in the typed attributes and vice
 versa, and properties the library does not model survive a round trip
 untouched (a conformance test proposed in [prior art Part 2](PRIOR_ART_AND_DECISIONS.md#part-2-standards)).
+
+These are the mode-free data classes. The bound subclasses add only a
+collection and the delegating I/O methods
+([§1.1 Sync and async](#11-sync-and-async)):
+
+```python
+class AsyncCalendarObject(CalendarObject):   # in _async/; unasync makes SyncCalendarObject
+    collection: AsyncCollection
+    async def save(self, *, overwrite: bool = False, scope: Scope = Scope.THIS,
+                   loss: LossPolicy | None = None) -> None: ...   # updates self: etag, uid, native_id
+    async def delete(self) -> None: ...
+    async def reload(self) -> None: ...                           # replaces self's data in place
+    async def relatives(self, reltype: str | None = None) -> list[AsyncCalendarObject]: ...
+    def as_data(self) -> CalendarObject: ...                      # mode-free copy, no collection
+
+class AsyncTask(Task, AsyncCalendarObject):
+    async def complete(self, at: datetime | None = None,
+                       mode: Literal["safe", "this_and_future"] = "safe") -> None: ...
+    async def uncomplete(self) -> None: ...
+class AsyncEvent(Event, AsyncCalendarObject): ...      # exists; no methods beyond the shared ones
+class AsyncJournal(Journal, AsyncCalendarObject): ...  # likewise
+# unasync generates SyncCalendarObject, SyncEvent, SyncTask and SyncJournal from these.
+```
+
+Rules for bound items:
+- `copy()` returns a copy bound to the same collection; `as_data()` returns
+  an unbound one.
+- Equality compares the data (the iCalendar content), never the collection.
+- Pickling a bound item raises `TypeError`, because it would carry a live
+  session; pickle `as_data()` instead.
+- `relatives()` returns each relative bound to the collection it was found
+  in. `collection.move()` returns the item bound to the target.
 
 Constructors: `Task.new(summary=..., due=..., **properties)`, and
 `Task.from_ical(data)`, `Task(icalendar_instance)`. The `uid` defaults to a
@@ -502,9 +610,8 @@ that stores `RRULE` (`recurrence` capability). Backends that do not
 **Not supported: "this and future" for events**, which splits a series in
 two. caldav does not offer it either, `ical`'s `store.py` is the reference
 for it ([prior art §1.3, `ical`](PRIOR_ART_AND_DECISIONS.md#13-ical-allen-porter)),
-and by [D1](PRIOR_ART_AND_DECISIONS.md#d1-packaging-principle) it belongs in a
-package of its own. `save(occurrence, scope=Scope.THIS_AND_FUTURE)` raises
-`UnsupportedError(Feature.RECURRENCE_EDIT_THIS_AND_FUTURE)` until one exists.
+and by [D1](PRIOR_ART_AND_DECISIONS.md#d1-packaging-principle) it may belong in the recurring-ical-events package ([§10 Open questions](#10-open-questions), Q3, and [issue 292](https://github.com/niccokunzmann/python-recurring-ical-events/issues/292)). `save(occurrence, scope=Scope.THIS_AND_FUTURE)` raises
+`UnsupportedError(Feature.RECURRENCE_EDIT_THIS_AND_FUTURE)` until it supports it.
 
 **Completing one occurrence of a recurring task** is `complete(task,
 mode=...)` with caldav's two modes, `safe` and `this_and_future`. (caldav
@@ -763,8 +870,8 @@ Adopts vdirsyncer's contract ([prior art §1.2, vdirsyncer](PRIOR_ART_AND_DECISI
 
 ```python
 @dataclass(frozen=True)
-class ChangeSet:
-    changed: list[CalendarObject]       # new or modified since token
+class ChangeSet(Generic[T]):            # outside _async/; T is the bound item class of the mode
+    changed: list[T]                    # new or modified since token, bound to the collection
     deleted: list[str]                  # uids
     token: SyncToken                    # SyncToken = NewType("SyncToken", str); opaque, persist it and pass it back
 
@@ -816,8 +923,8 @@ so `reload()` it. The item's `native` is a snapshot from when it was read,
 not a live handle.
 
 The other direction also works: `collection.wrap(native_item)` turns a
-backend object (a `caldav.Todo`, say) into this library's item, without
-I/O. Together with `.native` that lets code use both libraries side by side,
+backend object (a `caldav.Todo`, say) into this library's item, bound to
+that collection, without I/O. Together with `.native` that lets code use both libraries side by side,
 which is what a migration needs
 ([§9 Migrating from caldav](#9-migrating-from-caldav)).
 
@@ -839,11 +946,11 @@ caldav's public API as of 2026-10-08 (caldav 3.4.0).
 | `get_object_by_uid()`, `event_by_uid()`, `todo_by_uid()` | `get(uid)` | same |
 | `event_by_url()` | `get_by_native_id(href)` | same |
 | `add_todo(summary=…)`, `save_todo(…)` | `add(Task.new(summary=…))` | changed: two steps |
-| `obj.save()`, `no_overwrite`, `no_create` | `collection.save(obj)`, `collection.add(obj)` | changed: I/O moved, create and update split |
+| `obj.save()`, `no_overwrite`, `no_create` | `obj.save()` on a bound item, `collection.add(obj)` for a new one | same for updates; create and update split |
 | ETag / Schedule-Tag preconditions on save | `etag` precondition, `ConflictError` | same; Schedule-Tag only through the escape hatch |
-| `obj.load()`, `obj.delete()` | `collection.reload(obj)`, `collection.delete(obj)` | changed: I/O moved |
+| `obj.load()`, `obj.delete()` | `obj.reload()`, `obj.delete()` | same (in place on a bound item) |
 | `multiget()`, `load_by_multiget()` | used inside the backend | not a public call |
-| `icalendar_instance`, `edit_icalendar_component()` (borrowing) | `item.icalendar`, `item.component` | simpler: items are plain data, nothing to borrow |
+| `icalendar_instance`, `edit_icalendar_component()` (borrowing) | `item.icalendar`, `item.component` | simpler: the item is the iCalendar data, nothing to borrow |
 | `vobject_instance` | — | escape hatch (`item.native.vobject_instance`) |
 | `data`, `wire_data` | `item.icalendar.to_ical()` | same |
 | `search(expand=True)` | `search(expand=True)` | same |
@@ -852,13 +959,13 @@ caldav's public API as of 2026-10-08 (caldav 3.4.0).
 | `save(only_this_recurrence=None / False)` | — | escape hatch |
 | `expand_rrule(start, end)` on an object | `search(expand=True)`, or `recurring_ical_events` directly | changed |
 | "this and future" for events | — | missing in both |
-| `complete(handle_rrule=True, rrule_mode=…)` | `complete(task, mode=…)` | same modes; caldav's "interval from completion" guess is dropped |
-| `complete()` on a recurring task, default `handle_rrule=False` | `complete(task)` handles the `RRULE` (`mode="safe"`) | **behaviour change**: caldav completes the whole series by default |
-| `uncomplete()` | `collection.uncomplete(task)` | same |
+| `complete(handle_rrule=True, rrule_mode=…)` | `task.complete(mode=…)` | same modes; caldav's "interval from completion" guess is dropped |
+| `complete()` on a recurring task, default `handle_rrule=False` | `task.complete()` handles the `RRULE` (`mode="safe"`) | **behaviour change**: caldav completes the whole series by default |
+| `uncomplete()` | `task.uncomplete()` | same |
 | `is_pending()` | `task.status` | changed: no helper |
 | `get_due()`, `get_duration()`, `set_duration(movable_attr=…)`, `get_dtend()`, `set_end()` | `task.due`, `task.duration`, `task.set_duration(keep=…)`, `event.end` | same, as attributes |
 | `set_due(due, move_dtstart=…, check_dependent=…)` | `task.due = …` | **not yet**: `move_dtstart` and `check_dependent` |
-| `set_relation()`, `get_relatives()` | `task.relations`, `collection.relatives()` | same |
+| `set_relation()`, `get_relatives()` | `item.relations`, `item.relatives()` | same |
 | `check_reverse_relations()`, `fix_reverse_relations()` | — | **not yet** |
 | `objects_by_sync_token()` | `collection.changes(token)` | same |
 | `save_with_invites()`, `accept_invite()`, `decline_invite()`, `change_attendee_status()`, `schedule_inbox()`, `freebusy_request()` | `attendees`, `organizer` as data only | escape hatch; scheduling (iTIP) is outside the funded scope |
@@ -904,11 +1011,13 @@ since calendaring depends on caldav.
 For the author and for peer review. Each has a proposed answer; none blocks
 [roadmap 1.2](ROADMAP.md#12-abstract-base-classes-and-the-backend-conformance-suite) from starting.
 
-1. **Items without I/O (A1)** is the largest departure from caldav. It is
-   argued in [§1.1 Sync and async](#11-sync-and-async). *Author,
+1. **Items and I/O (A1).** The first draft had data-only items. *Author,
    2026-10-09: "I don't like it — but this is probably a necessary cost of
-   getting the async/sync schism right."* Accepted unless a peer reviewer
-   brings a better argument.
+   getting the async/sync schism right."* His review on 2026-10-10 showed
+   that most of its arguments do not survive unasync. The proposal is now
+   data classes plus bound subclasses per mode
+   ([§1.1 Sync and async](#11-sync-and-async)), which keeps caldav's
+   `task.save()`. Awaiting the author's confirmation.
 2. *Decided, 2026-10-09: `Workspace`.* **The name `Client`.** The author disliked it ("could mean anything")
    and suggested `CalendaringConfig`, `CalendaringCollection` and
    `Calendaring`. What the object is: a set of backends, usually loaded from
@@ -957,6 +1066,29 @@ For the author and for peer review. Each has a proposed answer; none blocks
 8. **The configuration file is shared by caldav, calendaring-jmap and this
    library.** Where should its parser live? A proposal for the team is in
    [CONFIGURATION_PROPOSAL.md](CONFIGURATION_PROPOSAL.md).
+9. **One item, several backends** (the author's suggestion, 2026-10-10): an
+   item that references a list of backends, so that `save()` or
+   `complete()` pushes the change to all of them. It is a good feature, but
+   it is a sync engine, not a reference:
+   - The same task has a different `uid`, `native_id` and `etag` on each
+     backend (Gitea synthesises the `uid`, [§3.2 Identity](#32-identity)),
+     so the item needs one identity record per backend.
+   - Capabilities differ, so one save can be lossless on CalDAV and lossy on
+     Gitea, which needs a loss decision per target.
+   - A save can succeed on one backend and fail on another. That is a
+     `MultiResult`, not a return value.
+   - When the backends have diverged, which copy wins?
+
+   **Proposal:** not in 1.x items. Binding to one collection does not rule
+   it out: a later `Mirror` that holds several bound copies and fans
+   `save()` out can be added without breaking anything. The organisation
+   already has an empty `calendaring-sync` repository, which is the natural
+   home for the conflict half.
+10. **Item class names** ([§1.1 Sync and async](#11-sync-and-async)):
+    `Task` (data) / `SyncTask` / `AsyncTask` as proposed, or `TaskData` /
+    `Task` / `AsyncTask` to match the I/O classes' httpx pattern? A
+    question for peer review; the proposal keeps the short name for the
+    class most code touches.
 
 ---
 
@@ -969,7 +1101,7 @@ someone else's calendar.
 |---|---|---|
 | a maintainer of `icalendar` | [§3 Items](#3-items) builds on its typed properties; the [roadmap 4.5](ROADMAP.md#45-documentation-review-and-improvements) documentation contributor comes from there | [§3 Items](#3-items), [§3.6 Properties with no standard home](#36-properties-with-no-standard-home) |
 | the author of `ical` and Home Assistant's calendar integrations (@allenporter) | the nearest existing multi-backend model, and the recurrence reference | [§1.1 Sync and async](#11-sync-and-async), [§5 Capabilities](#5-capabilities), [§3.7 Recurrence](#37-recurrence) |
-| a `caldav` user with a large codebase on it | the cost of A1 | [§1.1 Sync and async](#11-sync-and-async), [§2.3 Collection](#23-collection) |
+| a `caldav` user with a large codebase on it | A1: two item classes per mode and two ways to save, against caldav's one | [§1.1 Sync and async](#11-sync-and-async), [§2.3 Collection](#23-collection) |
 | `plann` (the author, as its maintainer) | the committed downstream consumer; [roadmap 1.6](ROADMAP.md#16-time-tracking-model-and-api) depends on [§3.4 Task](#34-task) | [§3.4 Task](#34-task), [§4 Search](#4-search) |
 | a vdirsyncer/pimsync maintainer | [§7 Change detection](#7-change-detection) adopts their contract | [§7 Change detection](#7-change-detection) |
 
