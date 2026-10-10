@@ -83,8 +83,8 @@ Workspace ──< Backend ──────< Collection ───────�
 - **Collection** — the unit that holds items: a CalDAV calendar, a directory
   of `.ics` files or a single `.ics` file, a feed, a JMAP calendar, a Gitea
   repository. Owns the capability table.
-- **Item** — `Event`, `Task` or `Journal`, sharing a base class
-  `CalendarObject`. One item is one `VCALENDAR` holding components of one
+- **Item** — `Event`, `Task` or `Journal`, sharing the base class
+  `Item`. One item is one `VCALENDAR` holding components of one
   `UID`: a non-recurring item, a full recurrence set, or a single
   occurrence. It is never a calendar of several items
   ([§3.1, What an item contains](#what-an-item-contains)).
@@ -96,6 +96,12 @@ a calendar.  "Collection" is also used in the CalDAV RFC, as a
 calendar is a WebDAV collection, so a CalDAV user loses nothing by the
 word. "Task" rather than caldav's "Todo" because the trackers say task
 or issue, and only iCalendar says to-do.
+
+"Item" rather than caldav's `CalendarObjectResource` or a shorter
+`CalendarObject`: RFC 4791 calls an item a "calendar object resource", but
+"calendar object" reads as a calendar, a collection of items, and a PR 5
+reviewer read it that way. "Item" is also what this document calls them
+throughout.
 
 "Backend" rather than "Account" or a per-backend "Client" (as in caldav's
 `DAVClient`), because a directory or a single `.ics` file has neither an
@@ -119,11 +125,11 @@ generator (unasync would otherwise produce `SyncWorkspace`).
 
 **Items: mode-free data classes, plus a bound class per mode (A1).**
 
-- `CalendarObject`, `Event`, `Task` and `Journal` are the mode-free data
+- `Item`, `Event`, `Task` and `Journal` are the mode-free data
   classes of [§3 Items](#3-items). They do no I/O, and helpers annotate
   against them, so a helper is written once for both modes.
 - `AsyncEvent`, `AsyncTask` and `AsyncJournal` subclass them (via
-  `AsyncCalendarObject`), hold the `AsyncCollection` they belong to (a
+  `AsyncItem`), hold the `AsyncCollection` they belong to (a
   tuple, with one entry for now; [§10](#10-open-questions), Q9), and
   add `save()`, `delete()`, `reload()` and `relatives()`, plus `complete()`
   and `uncomplete()` on tasks. Each calls the collection method of the same
@@ -207,7 +213,7 @@ class AsyncWorkspace:
 
     async def collections(self) -> MultiResult[AsyncCollection]: ...
     async def collection(self, name_or_id: str) -> AsyncCollection: ...   # NotFoundError, AmbiguousError
-    async def search(self, searcher: Searcher | None = None, **filters: Any) -> MultiResult[AsyncCalendarObject]: ...
+    async def search(self, searcher: Searcher | None = None, **filters: Any) -> MultiResult[AsyncItem]: ...
     # MultiResult[T]: dataclass with items: list[T], errors: Mapping[str, CalendaringError]
     # (keyed by backend id for collections(), by collection id for search()), raise_for_errors()
     async def close(self) -> None: ...
@@ -264,7 +270,7 @@ class AsyncBackend:
 
 ```python
 class AsyncCollection:
-    # Items taken as arguments may be any CalendarObject (data or bound, either mode);
+    # Items taken as arguments may be any Item (data or bound, either mode);
     # items returned are bound to this collection. add, save, reload and move are
     # overloaded per item type exactly as bind() is: Task -> AsyncTask, and so on.
     id: str
@@ -276,36 +282,36 @@ class AsyncCollection:
     native: object
 
     # reading
-    async def search(self, searcher: Searcher | None = None, **filters: Any) -> list[AsyncCalendarObject]: ...
-    def iter_search(self, searcher: Searcher | None = None, **filters: Any) -> AsyncIterator[AsyncCalendarObject]: ...
+    async def search(self, searcher: Searcher | None = None, **filters: Any) -> list[AsyncItem]: ...
+    def iter_search(self, searcher: Searcher | None = None, **filters: Any) -> AsyncIterator[AsyncItem]: ...
     async def tasks(self, **filters: Any) -> list[AsyncTask]: ...      # search(todo=True, ...)
     async def events(self, **filters: Any) -> list[AsyncEvent]: ...
     async def journals(self, **filters: Any) -> list[AsyncJournal]: ...
-    async def get(self, uid: str) -> AsyncCalendarObject: ...           # NotFoundError
-    async def get_by_native_id(self, native_id: str) -> AsyncCalendarObject: ...
-    async def reload(self, item: CalendarObject) -> AsyncCalendarObject: ...   # fresh copy, new etag
-    async def relatives(self, item: CalendarObject, reltype: str | None = None) -> list[AsyncCalendarObject]: ...
+    async def get(self, uid: str) -> AsyncItem: ...           # NotFoundError
+    async def get_by_native_id(self, native_id: str) -> AsyncItem: ...
+    async def reload(self, item: Item) -> AsyncItem: ...   # fresh copy, new etag
+    async def relatives(self, item: Item, reltype: str | None = None) -> list[AsyncItem]: ...
 
     # writing
-    async def add(self, item: CalendarObject, *, loss: LossPolicy | None = None,
-                  verify: bool | None = None) -> AsyncCalendarObject: ...
+    async def add(self, item: Item, *, loss: LossPolicy | None = None,
+                  verify: bool | None = None) -> AsyncItem: ...
     async def add_task(self, *, loss: LossPolicy | None = None, verify: bool | None = None, **properties: Any) -> AsyncTask: ...   # add(Task.new(**properties))
     async def add_event(self, *, loss: LossPolicy | None = None, verify: bool | None = None, **properties: Any) -> AsyncEvent: ...
     async def add_journal(self, *, loss: LossPolicy | None = None, verify: bool | None = None, **properties: Any) -> AsyncJournal: ...
-    async def save(self, item: CalendarObject, *, overwrite: bool = False, scope: Scope = Scope.THIS,
-                   loss: LossPolicy | None = None, verify: bool | None = None) -> AsyncCalendarObject: ...
+    async def save(self, item: Item, *, overwrite: bool = False, scope: Scope = Scope.THIS,
+                   loss: LossPolicy | None = None, verify: bool | None = None) -> AsyncItem: ...
                    # scope: occurrences only, see "Recurrence"; verify: see "What happens when ... unsupported"
-    async def delete(self, item: CalendarObject | str, *, overwrite: bool = False) -> None: ...
+    async def delete(self, item: Item | str, *, overwrite: bool = False) -> None: ...
     async def complete(self, task: Task, at: datetime | None = None,
                        mode: Literal["safe", "this_and_future"] = "safe",
                        *, loss: LossPolicy | None = None, verify: bool | None = None) -> AsyncTask: ...
     async def uncomplete(self, task: Task, *, loss: LossPolicy | None = None, verify: bool | None = None) -> AsyncTask: ...
-    async def move(self, item: CalendarObject, target: AsyncCollection,
-                   *, loss: LossPolicy | None = None, verify: bool | None = None) -> AsyncCalendarObject: ...   # bound to target
+    async def move(self, item: Item, target: AsyncCollection,
+                   *, loss: LossPolicy | None = None, verify: bool | None = None) -> AsyncItem: ...   # bound to target
     # every write takes loss= and verify=; None means the workspace's or backend's default
 
     # binding, no I/O
-    def wrap(self, native_item: object) -> AsyncCalendarObject: ...    # see "The escape hatch"
+    def wrap(self, native_item: object) -> AsyncItem: ...    # see "The escape hatch"
     @overload
     def bind(self, item: Task) -> AsyncTask: ...
     @overload
@@ -313,10 +319,10 @@ class AsyncCollection:
     @overload
     def bind(self, item: Journal) -> AsyncJournal: ...
     @overload
-    def bind(self, item: CalendarObject) -> AsyncCalendarObject: ...
+    def bind(self, item: Item) -> AsyncItem: ...
 
     # change detection
-    async def changes(self, token: SyncToken | None = None) -> ChangeSet[AsyncCalendarObject]: ...
+    async def changes(self, token: SyncToken | None = None) -> ChangeSet[AsyncItem]: ...
 
     async def delete_collection(self) -> None: ...
 ```
@@ -371,7 +377,7 @@ none), `add_event(...)` raises `UnsupportedError(Feature.COMPONENT_EVENT)`.
 ### 3.1 The base: a typed view over iCalendar
 
 ```python
-class CalendarObject:
+class Item:
     icalendar: icalendar.Calendar       # the whole VCALENDAR, VTIMEZONEs included
     component: icalendar.Component      # the one that describes the item; see "What an item contains"
 
@@ -463,24 +469,24 @@ These are the mode-free data classes. The bound subclasses add only their collec
 ([§1.1 Sync and async](#11-sync-and-async)):
 
 ```python
-class AsyncCalendarObject(CalendarObject):   # in _async/; unasync makes SyncCalendarObject
+class AsyncItem(Item):                                            # in _async/; unasync makes SyncItem
     collections: tuple[AsyncCollection, ...]                      # exactly one for now (Q9); checked by bind()/wrap()
     collection: AsyncCollection                                   # property: collections[0]
     async def save(self, *, overwrite: bool = False, scope: Scope = Scope.THIS,
                    loss: LossPolicy | None = None, verify: bool | None = None) -> None: ...   # updates self: etag, uid, native_id
     async def delete(self) -> None: ...
     async def reload(self) -> None: ...                           # replaces self's data in place
-    async def relatives(self, reltype: str | None = None) -> list[AsyncCalendarObject]: ...
-    def as_data(self) -> CalendarObject: ...                      # mode-free copy, no collection
+    async def relatives(self, reltype: str | None = None) -> list[AsyncItem]: ...
+    def as_data(self) -> Item: ...                                # mode-free copy, no collection
 
-class AsyncTask(Task, AsyncCalendarObject):
+class AsyncTask(Task, AsyncItem):
     async def complete(self, at: datetime | None = None,
                        mode: Literal["safe", "this_and_future"] = "safe",
                        *, loss: LossPolicy | None = None, verify: bool | None = None) -> None: ...
     async def uncomplete(self, *, loss: LossPolicy | None = None, verify: bool | None = None) -> None: ...
-class AsyncEvent(Event, AsyncCalendarObject): ...      # exists; no methods beyond the shared ones
-class AsyncJournal(Journal, AsyncCalendarObject): ...  # likewise
-# unasync generates SyncCalendarObject, SyncEvent, SyncTask and SyncJournal from these.
+class AsyncEvent(Event, AsyncItem): ...      # exists; no methods beyond the shared ones
+class AsyncJournal(Journal, AsyncItem): ...  # likewise
+# unasync generates SyncItem, SyncEvent, SyncTask and SyncJournal from these.
 ```
 
 Rules for bound items:
@@ -521,7 +527,7 @@ round-trip, and the conformance suite asserts it.
 ### 3.3 Event and Journal
 
 ```python
-class Event(CalendarObject):
+class Event(Item):
     start: date | datetime | None       # DTSTART
     end: date | datetime | None         # DTEND, or DTSTART + DURATION
     duration: timedelta | None
@@ -529,7 +535,7 @@ class Event(CalendarObject):
     location: str | None
     rrule: icalendar.vRecur | None
 
-class Journal(CalendarObject):
+class Journal(Item):
     start: date | datetime | None       # DTSTART
 ```
 
@@ -550,7 +556,7 @@ class TaskStatus(StrEnum):              # values are the iCalendar strings
     CANCELLED = "CANCELLED"
     FAILED = "FAILED"                   # tasks draft
 
-class Task(CalendarObject):
+class Task(Item):
     status: TaskStatus                  # STATUS; NEEDS_ACTION when absent
     native_status: str | None           # see "Native passthrough"
     priority: int                       # PRIORITY, 0-9, 0 = undefined, 1 = highest
@@ -1180,7 +1186,8 @@ For the author and for peer review. Each has a proposed answer; none blocks
     `Task` (data) / `SyncTask` / `AsyncTask` as proposed, or `TaskData` /
     `Task` / `AsyncTask` to match the I/O classes' httpx pattern? A
     question for peer review; the proposal keeps the short name for the
-    class most code touches.
+    class most code touches. The base class follows suit: `Item` /
+    `SyncItem` / `AsyncItem`, or `ItemData` / `Item` / `AsyncItem`.
 11. **Cooperation with calendaring-sync.**
     calendaring-sync (Sashank, same 2026-11-01 deadline) keeps sync state
     and detects conflicts; protocol adapters feed it. Its design
