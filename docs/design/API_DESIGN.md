@@ -18,11 +18,11 @@ Import names below say `calendaring`. The name may still change (see the note un
 
 | # | Decision | Section |
 |---|---|---|
-| A1 | Items (events, tasks, journals) are mode-free data classes, with a bound subclass per mode (`AsyncTask`, `SyncTask`) that adds `save()`, `complete()` and the like by delegating to its collection. `Collection`, `Backend` and `Workspace` come in a sync and an async version. | [§1 Layers and modes](#1-layers-and-modes), [§2 The I/O classes](#2-the-io-classes) |
+| A1 | Items (events, tasks, journals) are mode-free data classes, with a bound subclass per mode (`AsyncTask`, `SyncTask`) that holds a tuple of collections (one for now) and adds `save()`, `complete()` and the like by delegating to it. `Collection`, `Backend` and `Workspace` come in a sync and an async version. | [§1 Layers and modes](#1-layers-and-modes), [§2 The I/O classes](#2-the-io-classes) |
 | A2 | An item is a typed view over an `icalendar.Calendar`, delegating to `icalendar`'s own typed properties wherever they exist. | [§3 Items](#3-items) |
 | A3 | Search takes an `icalendar_searcher.Searcher`. The server may filter, but only ever *more loosely*; the client always re-filters. Results are therefore identical on every backend by construction. | [§4 Search](#4-search) |
 | A4 | Capabilities are a typed table per collection: feature → support level (`FULL`, `LOSSY`, `EMULATED`, `UNSUPPORTED`, `UNKNOWN`). | [§5 Capabilities](#5-capabilities) |
-| A5 | Unsupported operations raise before any I/O. A write that would lose data raises by default; the caller can downgrade that to a warning or allow it, per call or per workspace. Emulation happens only where the result is indistinguishable. | [§5.3 What happens when the caller asks for something unsupported](#53-what-happens-when-the-caller-asks-for-something-unsupported) |
+| A5 | Unsupported operations raise before any I/O. A write that would lose data raises by default, also before any I/O; the caller can downgrade that to a warning or allow it, per call or per workspace. Emulation happens only where the result is indistinguishable. `verify=True` checks a write afterwards and raises `VerificationError`. | [§5.3 What happens when the caller asks for something unsupported](#53-what-happens-when-the-caller-asks-for-something-unsupported) |
 | A6 | One exception hierarchy under `CalendaringError`; native exceptions are always chained as `__cause__`. | [§6 Errors](#6-errors) |
 | A7 | Every item carries an `etag`, real or synthetic (vdirsyncer's contract). Every collection answers `changes(token)`, natively or by emulation. | [§7 Change detection](#7-change-detection) |
 | A8 | The escape hatch is `.native` on every object, typed per backend, plus `native_status` / `native_priority` on tasks. | [§8 The escape hatch](#8-the-escape-hatch) |
@@ -89,7 +89,8 @@ generator (unasync would otherwise produce `SyncWorkspace`).
   classes of [§3 Items](#3-items). They do no I/O, and helpers annotate
   against them, so a helper is written once for both modes.
 - `AsyncEvent`, `AsyncTask` and `AsyncJournal` subclass them (via
-  `AsyncCalendarObject`), hold the `AsyncCollection` they belong to, and
+  `AsyncCalendarObject`), hold the `AsyncCollection` they belong to (a
+  tuple, with one entry for now; [§10](#10-open-questions), Q9), and
   add `save()`, `delete()`, `reload()` and `relatives()`, plus `complete()`
   and `uncomplete()` on tasks. Each calls the collection method of the same
   name and then updates the item in place ([§2.3 Collection](#23-collection)).
@@ -106,7 +107,8 @@ constructors:
   from a write (`add`, `save`, …), from `collection.add_task(**properties)`
   (shorthand for `add(Task.new(**properties))`, as caldav's `add_todo`), or
   from `collection.bind(item)`, which **elevates** a data item, or an item
-  bound elsewhere, to a copy bound to that collection, without I/O.
+  bound elsewhere, to a copy bound to that collection, without I/O. On a
+  bound item, `bind()` replaces its collections rather than adding to them.
 - `item.as_data()` goes the other way: a mode-free copy, with no
   collection inside, to hand to the other mode, to pickle, or to keep.
 
@@ -251,17 +253,22 @@ class AsyncCollection:
     async def relatives(self, item: CalendarObject, reltype: str | None = None) -> list[AsyncCalendarObject]: ...
 
     # writing
-    async def add(self, item: CalendarObject, *, loss: LossPolicy | None = None) -> AsyncCalendarObject: ...
-    async def add_task(self, **properties: Any) -> AsyncTask: ...      # add(Task.new(**properties))
-    async def add_event(self, **properties: Any) -> AsyncEvent: ...
-    async def add_journal(self, **properties: Any) -> AsyncJournal: ...
+    async def add(self, item: CalendarObject, *, loss: LossPolicy | None = None,
+                  verify: bool | None = None) -> AsyncCalendarObject: ...
+    async def add_task(self, *, loss: LossPolicy | None = None, verify: bool | None = None, **properties: Any) -> AsyncTask: ...   # add(Task.new(**properties))
+    async def add_event(self, *, loss: LossPolicy | None = None, verify: bool | None = None, **properties: Any) -> AsyncEvent: ...
+    async def add_journal(self, *, loss: LossPolicy | None = None, verify: bool | None = None, **properties: Any) -> AsyncJournal: ...
     async def save(self, item: CalendarObject, *, overwrite: bool = False, scope: Scope = Scope.THIS,
-                   loss: LossPolicy | None = None) -> AsyncCalendarObject: ...   # scope: occurrences only, see "Recurrence"
+                   loss: LossPolicy | None = None, verify: bool | None = None) -> AsyncCalendarObject: ...
+                   # scope: occurrences only, see "Recurrence"; verify: see "What happens when ... unsupported"
     async def delete(self, item: CalendarObject | str, *, overwrite: bool = False) -> None: ...
     async def complete(self, task: Task, at: datetime | None = None,
-                       mode: Literal["safe", "this_and_future"] = "safe") -> AsyncTask: ...
-    async def uncomplete(self, task: Task) -> AsyncTask: ...
-    async def move(self, item: CalendarObject, target: AsyncCollection) -> AsyncCalendarObject: ...   # bound to target
+                       mode: Literal["safe", "this_and_future"] = "safe",
+                       *, loss: LossPolicy | None = None, verify: bool | None = None) -> AsyncTask: ...
+    async def uncomplete(self, task: Task, *, loss: LossPolicy | None = None, verify: bool | None = None) -> AsyncTask: ...
+    async def move(self, item: CalendarObject, target: AsyncCollection,
+                   *, loss: LossPolicy | None = None, verify: bool | None = None) -> AsyncCalendarObject: ...   # bound to target
+    # every write takes loss= and verify=; None means the workspace's or backend's default
 
     # binding, no I/O
     def wrap(self, native_item: object) -> AsyncCalendarObject: ...    # see "The escape hatch"
@@ -283,9 +290,9 @@ class AsyncCollection:
 **`add` creates, `save` updates.** `add` fails with `AlreadyExistsError` if
 the UID is taken (CalDAV `If-None-Match: *`). `save` sends the item's `etag`
 as a precondition and fails with `ConflictError` if the stored object has
-changed since it was read; `overwrite=True` drops the precondition. caldav's
-`save()` that does either is convenient and is how lost updates happen; the
-split costs one method name.
+changed since it was read; `overwrite=True` drops the precondition. caldav has
+a `save()` that can be used both for adding and saving, causing a risk of 
+lost updates.
 
 **Collection writes return the stored item; bound methods update in
 place.** `collection.save(item)` and the other collection writes return a new
@@ -365,15 +372,15 @@ properties** — `Todo.DUE`, `Todo.start`, `Todo.duration`, `uid`,
 versa, and properties the library does not model survive a round trip
 untouched (a conformance test proposed in [prior art Part 2](PRIOR_ART_AND_DECISIONS.md#part-2-standards)).
 
-These are the mode-free data classes. The bound subclasses add only a
-collection and the delegating I/O methods
+These are the mode-free data classes. The bound subclasses add only their collections and the delegating I/O methods
 ([§1.1 Sync and async](#11-sync-and-async)):
 
 ```python
 class AsyncCalendarObject(CalendarObject):   # in _async/; unasync makes SyncCalendarObject
-    collection: AsyncCollection
+    collections: tuple[AsyncCollection, ...]                      # exactly one for now (Q9); checked by bind()/wrap()
+    collection: AsyncCollection                                   # property: collections[0]
     async def save(self, *, overwrite: bool = False, scope: Scope = Scope.THIS,
-                   loss: LossPolicy | None = None) -> None: ...   # updates self: etag, uid, native_id
+                   loss: LossPolicy | None = None, verify: bool | None = None) -> None: ...   # updates self: etag, uid, native_id
     async def delete(self) -> None: ...
     async def reload(self) -> None: ...                           # replaces self's data in place
     async def relatives(self, reltype: str | None = None) -> list[AsyncCalendarObject]: ...
@@ -381,17 +388,18 @@ class AsyncCalendarObject(CalendarObject):   # in _async/; unasync makes SyncCal
 
 class AsyncTask(Task, AsyncCalendarObject):
     async def complete(self, at: datetime | None = None,
-                       mode: Literal["safe", "this_and_future"] = "safe") -> None: ...
-    async def uncomplete(self) -> None: ...
+                       mode: Literal["safe", "this_and_future"] = "safe",
+                       *, loss: LossPolicy | None = None, verify: bool | None = None) -> None: ...
+    async def uncomplete(self, *, loss: LossPolicy | None = None, verify: bool | None = None) -> None: ...
 class AsyncEvent(Event, AsyncCalendarObject): ...      # exists; no methods beyond the shared ones
 class AsyncJournal(Journal, AsyncCalendarObject): ...  # likewise
 # unasync generates SyncCalendarObject, SyncEvent, SyncTask and SyncJournal from these.
 ```
 
 Rules for bound items:
-- `copy()` returns a copy bound to the same collection; `as_data()` returns
+- `copy()` returns a copy bound to the same collections; `as_data()` returns
   an unbound one.
-- Equality compares the data (the iCalendar content), never the collection.
+- Equality compares the data (the iCalendar content), never the collections.
 - Pickling a bound item raises `TypeError`, because it would carry a live
   session; pickle `as_data()` instead.
 - `relatives()` returns each relative bound to the collection it was found
@@ -484,8 +492,7 @@ Decisions in it, each from the survey:
 - **`DTSTART` means earliest sensible start.** That is the tasks draft's
   reading and the first in the survey's table; the other senses the survey
   found (planned start, expected completion) get their own fields instead
-  of overloading it. Actual start comes from the time log ([roadmap 1.6](ROADMAP.md#16-time-tracking-model-and-api)), not from a
-  field.
+  of overloading it. Actual start comes from the time log ([roadmap 1.6](ROADMAP.md#16-time-tracking-model-and-api)), not from a field.
 - **`duration` is derived, not stored.** On a task, `DURATION` is either
   `DUE − DTSTART` or a misused estimate. `task.duration` reads
   `DUE − DTSTART` (or `DURATION` when only that is present), and
@@ -652,15 +659,6 @@ Consequences:
   stop early.
 - **Naive datetimes are local time**, as `icalendar-searcher` assumes.
 
-**Risk:** the README of `icalendar-searcher` says that `filter`,
-`filter_calendar` and `sort_calendar` are AI-generated and covered only by
-AI-generated tests. caldav uses `check_component` and `sort`. The
-post-filter needs these methods to be trustworthy, so a thorough review of
-them, and the removal of the disclaimers, is requested in
-[icalendar-searcher issue 15](https://github.com/pycalendar/icalendar-searcher/issues/15). Until that is done,
-[roadmap 1.2](ROADMAP.md#12-abstract-base-classes-and-the-backend-conformance-suite)
-builds the post-filter on `check_component`.
-
 **How it fits Gitea:** its issue search API takes state, labels, a
 milestone and a since-timestamp. The backend translates `todo=True,
 include_completed=False` into `state=open` and `CATEGORIES` into labels,
@@ -735,9 +733,10 @@ initial set:
 | `task.relations.parent`, `task.relations.depends-on` | |
 | `categories`, `attendees` | for every component; on a task, attendees are its assignees |
 
-[roadmap 1.6](ROADMAP.md#16-time-tracking-model-and-api) adds `task.time-log` and friends. The list is closed per release: the
-conformance suite iterates over `Feature`, and a backend's declaration must
-cover every member (missing = test failure, not a silent default).
+[roadmap 1.6](ROADMAP.md#16-time-tracking-model-and-api) adds `task.time-log` and friends. Below 1.0 the list grows as backends need
+it ([§10 Open questions](#10-open-questions), Q7). The conformance suite
+iterates over `Feature`, and a backend's declaration must cover every member
+(missing = test failure, not a silent default).
 
 It is a table rather than an `IntFlag` like Home Assistant's, because a
 flag is yes/no and the survey's most common answer is "yes, lossily". It has
@@ -781,11 +780,22 @@ Three cases, matching the roadmap's "raise, degrade, or emulate":
   weaker guarantee (`write.conditional` emulated has a race window). No
   emulation that changes a result is ever automatic.
 
+The `RAISE` default for lossy writes is confirmed by the author (2026-10-10).
+
 What the library cannot catch: a server that declares `UNKNOWN` and then
 silently drops a property. caldav's hints call that `unsupported`; only a
-probe (caldav-server-tester) or a read-back finds it. A `verify=True` on
-`save` that reloads and compares is possible and cheap to add; it is left
-out until someone needs it ([§10 Open questions](#10-open-questions), Q4).
+probe (caldav-server-tester) or a read-back finds it. So every write takes
+`verify=True`, from the first release: after the write the item is
+reloaded and compared with what was sent. The comparison covers the
+properties the library models ([§3 Items](#3-items)), after normalisation,
+and skips what servers legitimately change: `DTSTAMP`, `SEQUENCE`, property
+order, and the identity a backend assigns (`uid`, `native_id`, `etag`;
+[§3.2 Identity](#32-identity)). A difference raises `VerificationError`
+listing what the server dropped or changed. It is not a `LossyWriteError`:
+that one means nothing was sent, while a `VerificationError` means the
+write happened and the stored result differs. It costs one extra
+round trip, so it is off by default, and a caller can turn it on per call
+or per workspace or backend, like `loss=`.
 
 ---
 
@@ -801,9 +811,10 @@ CalendaringError
 ├── ConflictError                 # precondition failed: changed since read
 │   └── AlreadyExistsError        # add() with a UID already present
 ├── UnsupportedError              # carries .feature
-│   └── LossyWriteError           # carries .losses
+│   └── LossyWriteError           # carries .losses; raised before anything is sent
 ├── InvalidDataError              # the backend rejected the data, or it does not parse; also a ValueError
 ├── RateLimitError                # carries .retry_after: float | None
+├── VerificationError             # verify=True: written, but stored differently; carries .differences
 └── BackendError                  # anything else from the backend or transport
     └── TransportError            # network, TLS, timeout
 
@@ -1030,7 +1041,8 @@ For the author and for peer review. Each has a proposed answer; none blocks
    completion" guess for an `RRULE` without `BY*` parts until then: a
    known deviation from [§2.3 Collection](#23-collection), listed in the
    capability matrix.
-4. **`save(verify=True)`** ([§5.3 What happens when the caller asks for something unsupported](#53-what-happens-when-the-caller-asks-for-something-unsupported)): add now or when asked?
+4. *Decided, 2026-10-10:* **`verify=True`** on writes is in from the first
+   release ([§5.3 What happens when the caller asks for something unsupported](#53-what-happens-when-the-caller-asks-for-something-unsupported)).
 5. *Resolved, 2026-10-09:* assignees are `ATTENDEE`s with the tracker's
    profile URL as the calendar address; no `X-` property
    ([§3.4 Task](#34-task)).
@@ -1039,15 +1051,16 @@ For the author and for peer review. Each has a proposed answer; none blocks
    against a Gitea run as a CI service container (the official image with
    SQLite needs a few hundred MB of RAM and no persistent host). This is a
    task for 2.5, not a question for the author. A permanent instance is only
-   needed for dogfooding, and is optional.
-7. **Feature granularity.** The list in [§5.1 The table](#51-the-table) is what the funded backends
-   need. It is closed per release (adding one is a minor version, since
-   every backend must declare it); whether that is too rigid for
-   third-party backends is a question for after 1.0.
+   needed for dogfooding, and is optional. *Author, 2026-10-10:* the
+   integration tests run against a CI service container, as caldav's do.
+7. *Decided, 2026-10-10:* **Feature granularity.** Below 1.0 the list in
+   [§5.1 The table](#51-the-table) is flexible: it starts with what the
+   funded backends need and grows when needed. Whether it is closed per
+   release after 1.0 is a question for then.
 8. **The configuration file is shared by caldav, calendaring-jmap and this
    library.** Where should its parser live? A proposal for the team is in
    [CONFIGURATION_PROPOSAL.md](CONFIGURATION_PROPOSAL.md).
-9. **One item, several backends** (the author's suggestion, 2026-10-10): an
+9. *Partly decided, 2026-10-10:* **One item, several backends** (the author's suggestion): an
    item that references a list of backends, so that `save()` or
    `complete()` pushes the change to all of them. It is a good feature, but
    it is a sync engine, not a reference:
@@ -1060,11 +1073,16 @@ For the author and for peer review. Each has a proposed answer; none blocks
      `MultiResult`, not a return value.
    - When the backends have diverged, which copy wins?
 
-   **Proposal:** not in 1.x items. Binding to one collection does not rule
-   it out: a later `Mirror` that holds several bound copies and fans
-   `save()` out can be added without breaking anything. The conflict half
+   **Proposal:** no mirroring in 1.x. The conflict half
    belongs in [calendaring-sync](https://github.com/pycalendar/calendaring-sync),
    which is being designed now (Q11).
+   *Decided by the author:* bound items hold their collections as a tuple
+   (`item.collections`) from the start, with only one supported for now:
+   `bind()` and `wrap()` produce exactly one, and building a bound item
+   with more raises `UnsupportedError`. The attribute stays when mirroring
+   comes, but `etag`, `native_id`, `collection_id` and (on Gitea) `uid` are
+   singular today and per backend then (first bullet above), so mirroring
+   will change those parts of the API.
 10. **Item class names** ([§1.1 Sync and async](#11-sync-and-async)):
     `Task` (data) / `SyncTask` / `AsyncTask` as proposed, or `TaskData` /
     `Task` / `AsyncTask` to match the I/O classes' httpx pattern? A
@@ -1081,8 +1099,11 @@ For the author and for peer review. Each has a proposed answer; none blocks
       dropping a truncated `sync-collection` page (RFC 6578 §3.6), losing a
       403's body (so `valid-sync-token` cannot be told from a permission
       error), `save()` bumping `SEQUENCE` unasked, and `delete()` sending no
-      precondition. Our CalDAV backend hits the same four. They belong in
-      caldav, as issues filed now.
+      precondition. Our CalDAV backend hits the same four. Filed as caldav
+      issues [737](https://github.com/python-caldav/caldav/issues/737),
+      [738](https://github.com/python-caldav/caldav/issues/738),
+      [739](https://github.com/python-caldav/caldav/issues/739) and
+      [740](https://github.com/python-caldav/caldav/issues/740).
     - **One "calendaring" adapter later.** Our `Collection.changes()`,
       etags and conditional writes cover CalDAV, JMAP, files, feeds and
       Gitea. An adapter in calendaring-sync built on them would give it
@@ -1114,7 +1135,7 @@ someone else's calendar.
 | a vdirsyncer/pimsync maintainer | [§7 Change detection](#7-change-detection) adopts their contract | [§7 Change detection](#7-change-detection) |
 
 What the author needs to do: decide whom to approach, and send this
-document, or [§10 Open questions](#10-open-questions) alone; the author's own review is done.
+document, or [§10 Open questions](#10-open-questions) alone. The author has reviewed it; Q3 and Q11 still await him.
 
 ---
 
