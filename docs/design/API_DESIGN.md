@@ -14,19 +14,51 @@ Import names below say `calendaring`. The name may still change (see the note un
 
 ---
 
-## Decisions in short
+## Overview
 
-| # | Decision | Section |
-|---|---|---|
-| A1 | Items (events, tasks, journals) are mode-free data classes, with a bound subclass per mode (`AsyncTask`, `SyncTask`) that holds a tuple of collections (one for now) and adds `save()`, `complete()` and the like by delegating to it. `Collection`, `Backend` and `Workspace` come in a sync and an async version. | [§1 Layers and modes](#1-layers-and-modes), [§2 The I/O classes](#2-the-io-classes) |
-| A2 | An item is a typed view over an `icalendar.Calendar`, delegating to `icalendar`'s own typed properties wherever they exist. | [§3 Items](#3-items) |
-| A3 | Search takes an `icalendar_searcher.Searcher`. The server may filter, but only ever *more loosely*; the client always re-filters. Results are therefore identical on every backend by construction. | [§4 Search](#4-search) |
-| A4 | Capabilities are a typed table per collection: feature → support level (`FULL`, `LOSSY`, `EMULATED`, `UNSUPPORTED`, `UNKNOWN`). | [§5 Capabilities](#5-capabilities) |
-| A5 | Unsupported operations raise before any I/O. A write that would lose data raises by default, also before any I/O; the caller can downgrade that to a warning or allow it, per call or per workspace. Emulation happens only where the result is indistinguishable. `verify=True` checks a write afterwards and raises `VerificationError`. | [§5.3 What happens when the caller asks for something unsupported](#53-what-happens-when-the-caller-asks-for-something-unsupported) |
-| A6 | One exception hierarchy under `CalendaringError`; native exceptions are always chained as `__cause__`. | [§6 Errors](#6-errors) |
-| A7 | Every item carries an `etag`, real or synthetic (vdirsyncer's contract). Every collection answers `changes(token)`, natively or by emulation. | [§7 Change detection](#7-change-detection) |
-| A8 | The escape hatch is `.native` on every object, typed per backend, plus `native_status` / `native_priority` on tasks. | [§8 The escape hatch](#8-the-escape-hatch) |
-| A9 | Fields RFC 5545 lacks go to RFC 9253 or the tasks draft, then `X-PYCAL-*`. | [§3.6 Properties with no standard home](#36-properties-with-no-standard-home) |
+One Python API over many places calendar data lives: CalDAV servers,
+`.ics` files and directories, read-only feeds, JMAP, and issue trackers
+such as Gitea. A program written against it should behave the same
+whichever of these it is pointed at, and should be told, rather than
+find out later, when a backend cannot do what it asked. The decisions
+below are labelled A1–A9 so the rest of the document can refer to them.
+
+**The objects.** A `Workspace` holds `Backend`s (one server, directory,
+file or feed each), a backend holds `Collection`s (a calendar, a task list, a
+repository), and a collection holds items: `Event`, `Task`, `Journal`.
+The I/O classes come in a sync and an async version. The items are plain
+data, so helpers are written once for both modes; what a collection hands
+out is that data bound to it (`AsyncTask`, `SyncTask`), which adds
+`save()`, `complete()` and the like (**A1**, [§1](#1-layers-and-modes),
+[§2](#2-the-io-classes)). An item is a typed view over an
+`icalendar.Calendar` and reuses `icalendar`'s typed properties rather than
+redefining them (**A2**, [§3](#3-items)).
+
+**Same answer everywhere.** Backends differ in how well they can search,
+so the server's answer is never trusted alone: a backend may filter
+server-side, but only more loosely, and the client always re-filters with
+`icalendar_searcher` (**A3**, [§4](#4-search)). Likewise, every item has an
+`etag` and every collection can list changes since a token, natively or by
+emulation, so a sync tool does not need to know which backend it talks to
+(**A7**, [§7](#7-change-detection)).
+
+**No silent data loss.** Each collection carries a table of what it
+supports, and how well (**A4**, [§5](#5-capabilities)). An operation it
+cannot do raises before any I/O. A write that would lose data, such as a
+fourth task status on a tracker with three, also raises by default; the
+caller can lower that to a warning or allow it. Emulation is used only when
+the result is the same or the weaker guarantee is documented (an emulated
+conditional write can race), and `verify=True` reads a write
+back to check it (**A5**, [§5.3](#53-what-happens-when-the-caller-asks-for-something-unsupported)).
+Fields iCalendar has no property for go to RFC 9253 or the tasks draft
+first, and `X-PYCAL-*` only as a last resort (**A9**,
+[§3.6](#36-properties-with-no-standard-home)).
+
+**When the abstraction is not enough.** Errors form one hierarchy under
+`CalendaringError`, with the backend's own exception kept as `__cause__`
+(**A6**, [§6](#6-errors)), every object exposes the backend's own
+object as `.native`, and tasks keep the backend's own status and priority
+as `native_status` / `native_priority` (**A8**, [§8](#8-the-escape-hatch)).
 
 ---
 
