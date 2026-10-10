@@ -84,8 +84,10 @@ Workspace ──< Backend ──────< Collection ───────�
   of `.ics` files or a single `.ics` file, a feed, a JMAP calendar, a Gitea
   repository. Owns the capability table.
 - **Item** — `Event`, `Task` or `Journal`, sharing a base class
-  `CalendarObject`. One item is one iCalendar object resource: all
-  components with one `UID` (the master and its overridden occurrences).
+  `CalendarObject`. One item is one `VCALENDAR` holding components of one
+  `UID`: a non-recurring item, a full recurrence set, or a single
+  occurrence. It is never a calendar of several items
+  ([§3.1, What an item contains](#what-an-item-contains)).
   These are mode-free data; what a collection hands out is the same data
   bound to it (`AsyncTask`, `SyncTask`, …, [§1.1](#11-sync-and-async)).
 
@@ -371,7 +373,7 @@ none), `add_event(...)` raises `UnsupportedError(Feature.COMPONENT_EVENT)`.
 ```python
 class CalendarObject:
     icalendar: icalendar.Calendar       # the whole VCALENDAR, VTIMEZONEs included
-    component: icalendar.Component      # the master (or the occurrence, see is_occurrence)
+    component: icalendar.Component      # the one that describes the item; see "What an item contains"
 
     uid: str
     native_id: str | None               # backend's own id; None until stored
@@ -388,8 +390,8 @@ class CalendarObject:
     created: datetime | None
     last_modified: datetime | None
 
-    is_occurrence: bool                 # True when produced by search(expand=True)
-    recurrence_id: date | datetime | None
+    is_occurrence: bool                 # True when the item is one occurrence, not the whole stored object
+    recurrence_id: date | datetime | None   # read-through: component's RECURRENCE-ID, None on a master
 
     def copy(self) -> Self: ...
 ```
@@ -403,6 +405,59 @@ properties** — `Todo.DUE`, `Todo.start`, `Todo.duration`, `uid`,
 `item.icalendar` directly sees the change in the typed attributes and vice
 versa, and properties the library does not model survive a round trip
 untouched (a conformance test proposed in [prior art Part 2](PRIOR_ART_AND_DECISIONS.md#part-2-standards)).
+
+#### What an item contains
+
+The `icalendar` attribute is always a whole `VCALENDAR`, because that is how
+CalDAV stores and transfers an item, but it is never a calendar in the sense
+of a collection. An item holds one component type (plus `VTIMEZONE`s) and one
+`UID`, as RFC 4791 §4.1 requires of a stored object, and it is exactly one of
+these three:
+
+| The item is | `icalendar` holds | `component` | `is_occurrence` | `recurrence_id` | caldav [#398](https://github.com/python-caldav/caldav/issues/398) |
+|---|---|---|---|---|---|
+| a non-recurring item | one component | that component | `False` | `None` | 100 |
+| a full recurrence set | the master (`RRULE` or `RDATE`) and all its overridden occurrences, if any | the master | `False` | `None` | 110, 011 |
+| a single occurrence | one component: a generated occurrence, or an override | that occurrence | `True` | its `RECURRENCE-ID` | 101 |
+
+**A single occurrence is part of a stored object, not all of it.** The
+stored object may also hold the master and other overrides that the item
+does not carry. Occurrences come from three places:
+
+- `search(expand=True)`, client-side;
+- a server that expanded the series itself. CalDAV's `expand` returns only
+  the occurrences in the time range, so tomorrow's agenda does not download
+  decades of overrides from a long series. Whether to ask the server is the
+  backend's choice ([§9](#9-migrating-from-caldav), `server_expand`);
+- a stored object that holds overrides without their master, which RFC 4791
+  §4.1 allows, e.g. for an attendee invited to some instances only. The
+  backend hands out one occurrence item per override.
+
+Several occurrences of one series are several items. They share a `uid`,
+and on a stored series they share a `native_id` and an `etag` too.
+`save(occurrence)` merges the occurrence back into the stored object
+([§3.7 Recurrence](#37-recurrence)), and how `delete()` and conflict
+detection treat siblings is [§10](#10-open-questions), Q12.
+
+What an item never holds:
+
+- **several `UID`s.** A `.ics` file or a feed with many items is a
+  collection, and the backend splits it into items.
+- **several occurrences without their master** (001 in caldav
+  [#398](https://github.com/python-caldav/caldav/issues/398)). A CalDAV
+  server answering an expanded time-range query returns, per stored object,
+  every occurrence in the window. caldav's `search()` splits that into one
+  object per occurrence by default (`split_expanded=True`) and keeps them
+  together only on request. Here the split is the only behaviour.
+- **no data.** An item comes from a factory or a read, never as an empty
+  shell to be loaded later.
+
+caldav [#597](https://github.com/python-caldav/caldav/issues/597) asks for
+helpers that tell these cases apart, and the table is the list such helpers
+would answer. `is_occurrence` is the one that matters most, because it says
+that the item is not the whole stored object. Whether to add `is_recurring`
+and the like as convenience properties is left to
+[roadmap 1.2](ROADMAP.md#12-abstract-base-classes-and-the-backend-conformance-suite).
 
 These are the mode-free data classes. The bound subclasses add only their collections and the delegating I/O methods
 ([§1.1 Sync and async](#11-sync-and-async)):
@@ -609,9 +664,11 @@ occurrence a "recurrence instance", and caldav calls it a "recurrence"
 "recurrence" also means the repetition itself (the rule, "the recurrence
 set"), and the two senses get mixed up.
 
-`search(..., expand=True)` returns occurrences: items with `is_occurrence`
-set and `recurrence_id` filled in, expanded by `recurring_ical_events` via
-`icalendar-searcher`.
+`search(..., expand=True)` returns occurrences, one item per occurrence:
+items with `is_occurrence` set and `recurrence_id` filled in, expanded by
+`recurring_ical_events` via `icalendar-searcher`. Several occurrences of
+one series in the search window are several items with the same `uid`
+([What an item contains](#what-an-item-contains)).
 
 **Editing one occurrence works as it does in caldav.** `save(occurrence)`
 fetches the master, inserts or replaces the override component for that
@@ -982,6 +1039,7 @@ caldav's public API as of 2026-10-08 (caldav 3.4.0).
 | `vobject_instance` | — | escape hatch (`item.native.vobject_instance`) |
 | `data`, `wire_data` | `item.icalendar.to_ical()` | same |
 | `search(expand=True)` | `search(expand=True)` | same |
+| `search(expand=True, split_expanded=False)` | — | dropped: an item is never several occurrences without their master ([§3.1](#what-an-item-contains)) |
 | `save(only_this_recurrence=True)` (default) | `save(occurrence)` | same ([§3.7 Recurrence](#37-recurrence)) |
 | `save(all_recurrences=True)` | `save(occurrence, scope=Scope.ALL)` | same |
 | `save(only_this_recurrence=None / False)` | — | escape hatch |
@@ -1150,6 +1208,25 @@ For the author and for peer review. Each has a proposed answer; none blocks
       depend on calendaring; calendaring depending on calendaring-sync
       (for a `Mirror`) would have to be an optional extra, like JMAP
       ([D3](PRIOR_ART_AND_DECISIONS.md#d3-licence)).
+12. **Occurrence items: `delete()` and the shared etag**
+    ([What an item contains](#what-an-item-contains)). Occurrences of one
+    stored series share its `native_id` and `etag`, so the rules for a whole
+    object do not carry over:
+    - **`delete(occurrence)`** must not delete the stored series, which is
+      what caldav does today (caldav
+      [#398](https://github.com/python-caldav/caldav/issues/398)).
+      **Proposal:** remove that occurrence's override, if there is one, and
+      add an `EXDATE` to the master. When there is no master, remove the
+      override, and delete the stored object only when it was the last one.
+      `STATUS:CANCELLED`, which #398 suggests, would be a different call: an
+      edit, not a deletion.
+    - **Conflicts between siblings.** Saving one occurrence changes the
+      stored object's etag under its siblings. If a sibling's save then
+      required the etag it was read with, it would raise `ConflictError`
+      for an edit nobody made to it. **Proposal:** `save(occurrence)`
+      already fetches the stored object to merge into, so it raises only if
+      *that occurrence* changed since it was read (its override's
+      `SEQUENCE` or `LAST-MODIFIED`), and writes with the fresh etag.
 
 ---
 
