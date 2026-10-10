@@ -2,7 +2,7 @@
 
 **Roadmap item:** [1.1 Unified API design and peer review](ROADMAP.md#11-unified-api-design-and-peer-review)
 
-**Status:** draft by Claude Opus 5.5, 2026-10-08. Reviewed and edited by the author on the following days, and his comments applied. The A1 rework (2026-10-10) awaits his confirmation ([§10 Open questions](#10-open-questions), Q1). Not yet peer-reviewed ([§11 Peer review](#11-peer-review)).
+**Status:** draft by Claude Opus 5.5, 2026-10-08. Reviewed and edited by the author on the following days, and his comments applied. The A1 rework was accepted on 2026-10-10. Not yet peer-reviewed ([§11 Peer review](#11-peer-review)).
 
 **Inputs:** [0.1 task model survey](TASK_MODEL_SURVEY.md), [0.2 sync/async decision](SYNC_ASYNC_ARCHITECTURE.md#11-decision), [0.3 decisions D1–D7](PRIOR_ART_AND_DECISIONS.md#part-3-project-decisions)
 
@@ -18,7 +18,7 @@ Import names below say `calendaring`. The name may still change (see the note un
 
 | # | Decision | Section |
 |---|---|---|
-| A1 | *(Proposal.)* Items (events, tasks, journals) are mode-free data classes, with a bound subclass per mode (`AsyncTask`, `SyncTask`) that adds `save()`, `complete()` and the like by delegating to its collection. `Collection`, `Backend` and `Workspace` come in a sync and an async version. | [§1 Layers and modes](#1-layers-and-modes), [§2 The I/O classes](#2-the-io-classes) |
+| A1 | Items (events, tasks, journals) are mode-free data classes, with a bound subclass per mode (`AsyncTask`, `SyncTask`) that adds `save()`, `complete()` and the like by delegating to its collection. `Collection`, `Backend` and `Workspace` come in a sync and an async version. | [§1 Layers and modes](#1-layers-and-modes), [§2 The I/O classes](#2-the-io-classes) |
 | A2 | An item is a typed view over an `icalendar.Calendar`, delegating to `icalendar`'s own typed properties wherever they exist. | [§3 Items](#3-items) |
 | A3 | Search takes an `icalendar_searcher.Searcher`. The server may filter, but only ever *more loosely*; the client always re-filters. Results are therefore identical on every backend by construction. | [§4 Search](#4-search) |
 | A4 | Capabilities are a typed table per collection: feature → support level (`FULL`, `LOSSY`, `EMULATED`, `UNSUPPORTED`, `UNKNOWN`). | [§5 Capabilities](#5-capabilities) |
@@ -54,6 +54,8 @@ Workspace ──< Backend ──────< Collection ───────�
 - **Item** — `Event`, `Task` or `Journal`, sharing a base class
   `CalendarObject`. One item is one iCalendar object resource: all
   components with one `UID` (the master and its overridden occurrences).
+  These are mode-free data; what a collection hands out is the same data
+  bound to it (`AsyncTask`, `SyncTask`, …, [§1.1](#11-sync-and-async)).
 
 "Collection" rather than "Calendar" because a Gitea repository is not
 a calendar.  "Collection" is also used in the CalDAV RFC, as a
@@ -81,78 +83,50 @@ generated. The public names follow httpx's pattern: `Workspace` / `AsyncWorkspac
 from `calendaring`. That costs one replacement-map entry per class in [roadmap 1.3](ROADMAP.md#13-syncasync-scaffolding)'s
 generator (unasync would otherwise produce `SyncWorkspace`).
 
-**Items: plain data, plus a bound twin per mode (A1).** An earlier draft
-made items pure data with no I/O at all: `collection.complete(task)`, never
-`task.complete()`. The author's review knocked out most of its arguments,
-and this is the reworked version.
-
-*Arguments for data-only items, re-examined:*
-
-1. **"One `Task` type in both modes."** This is not about duplicated code
-   in this library, since unasync would generate an `AsyncTask`'s sync twin
-   like everything else. It is about type identity for the library's
-   *users*. A plann helper annotated `def fmt(t: Task)` does not accept an
-   `AsyncTask`, because they are different classes. That holds for `Event`
-   and `Journal` just as much; nothing here is task-specific. It is real,
-   but it does not need data-only items: a shared mode-free base class that
-   helpers annotate against solves it (below).
-2. **"No back reference to an I/O object."** This does not hold under
-   unasync. caldav's problem was *dual-mode* methods returning
-   `Self | Coroutine`, not the back reference. A generated `AsyncTask`
-   holding an `AsyncCollection`, and a `SyncTask` holding a sync
-   `Collection`, are each typed correctly.
-3. **"Items can be built before there is anywhere to put them."** Moot, as
-   the author pointed out: caldav does it with `client=None`.
-4. **"Cache-then-sync backends fit it naturally."** Weak. A bound `save()`
-   that delegates to its collection fits them just as well.
-
-*Arguments for items that do I/O (`task.save()`, `task.complete()`):*
-
-- **The item knows where it lives.** `Workspace.search` returns items from
-  many collections. With data-only items, saving one means looking up
-  `workspace.collection(item.collection_id)` first. This is the strongest
-  argument, and the earlier draft missed it.
-- **Familiarity and migration.** caldav users write `todo.complete()` and
-  `event.save()`. plann's 13 `.save(` and 4 `.complete(` call sites
-  ([§9.1](#91-a-migration-path-for-plann)) stay as they are.
-- **It reads naturally**, and an editor's completion finds the operations
-  on the object.
-
-*What still speaks for keeping a mode-free data class:* an item fetched by
-sync code can be handed to async code, or to another backend, without
-carrying the wrong session along. It can be compared, copied and pickled
-without a live session inside it. And helpers can be written once (point 1
-above).
-
-**Decision (proposal, after the author's review on 2026-10-10): both.**
+**Items: mode-free data classes, plus a bound class per mode (A1).**
 
 - `CalendarObject`, `Event`, `Task` and `Journal` are the mode-free data
-  classes of [§3 Items](#3-items). Constructors (`Task.new(...)`) make
-  these, and helpers annotate against them.
-- `AsyncEvent`, `AsyncTask` and `AsyncJournal` subclass them, hold the
-  `AsyncCollection` they came from, and add `save()`, `delete()`,
-  `reload()`, `relatives()`, and for tasks `complete()` and `uncomplete()`.
-  Each one delegates to the collection method of the same name. unasync
-  generates the sync twins, `SyncEvent`, `SyncTask` and `SyncJournal`.
-  Those keep unasync's default name, because the unprefixed name belongs
-  to the data class that most code touches.
-- Every collection method that returns items returns the bound class for
-  its own mode. `collection.bind(item)` returns a copy of any item bound to
-  that collection, which is how an item crosses modes or backends.
-- The collection methods stay as they are, and are the primitive. A bound
-  method calls its collection's method and then updates the item in place
-  (see [§2.3 Collection](#23-collection)).
-- `item.as_data()` returns the mode-free copy, with no collection inside.
-  That is the step that makes the points above true: a fetched item is
-  bound, and it crosses to the other mode, goes into a pickle, or moves to
-  another backend through `as_data()` or `bind()`.
-- Placement under unasync: the data classes are hand-written outside
-  `_async/` and shared by both modes. The bound classes live in `_async/`,
-  and unasync's default `AsyncX` → `SyncX` rename produces the sync ones
-  with no replacement-map entry.
+  classes of [§3 Items](#3-items). They do no I/O, and helpers annotate
+  against them, so a helper is written once for both modes.
+- `AsyncEvent`, `AsyncTask` and `AsyncJournal` subclass them (via
+  `AsyncCalendarObject`), hold the `AsyncCollection` they belong to, and
+  add `save()`, `delete()`, `reload()` and `relatives()`, plus `complete()`
+  and `uncomplete()` on tasks. Each calls the collection method of the same
+  name and then updates the item in place ([§2.3 Collection](#23-collection)).
+  unasync generates `SyncEvent`, `SyncTask` and `SyncJournal`.
+- The collection methods are the primitive: `task.save()` is
+  `task.collection.save(task)` plus the in-place update.
 
-Cost: two more classes per item type, and two ways to save. The bound
-method is the thin one, so the two cannot disagree.
+**How items are made.** Library users do not call the bound classes'
+constructors:
+- A data item comes from a factory, not a constructor:
+  `Task.new(summary=..., due=...)`, `Task.from_ical(data)` or
+  `Task.from_icalendar(calendar)` ([§3.1](#31-the-base-a-typed-view-over-icalendar)).
+- A bound item comes from a collection: from a read (`search`, `get`, …),
+  from a write (`add`, `save`, …), from `collection.add_task(**properties)`
+  (shorthand for `add(Task.new(**properties))`, as caldav's `add_todo`), or
+  from `collection.bind(item)`, which **elevates** a data item, or an item
+  bound elsewhere, to a copy bound to that collection, without I/O.
+- `item.as_data()` goes the other way: a mode-free copy, with no
+  collection inside, to hand to the other mode, to pickle, or to keep.
+
+**Why this shape, in short.** Data-only items (the first draft) would make
+callers keep track of which collection every item came from: `Workspace.search`
+returns items from many collections, so saving one would mean looking its
+collection up first. They would also break caldav's `task.save()` and
+`todo.complete()`, which plann calls 13 and 4 times. Bound-only items (no
+data class) would make every helper choose between `AsyncTask` and
+`SyncTask`, and would carry a live session into every copy and pickle. The
+back reference itself is harmless under unasync, because the "annotations
+that lie" came from caldav's *dual-mode* methods, not from the item knowing
+its client. The cost of having both is two more classes per item type, and
+two ways to save; the bound method is the thin one, so the two cannot
+disagree. *Decided by the author, 2026-10-10.*
+
+**Placement under unasync.** The data classes are hand-written outside
+`_async/` and shared by both modes. The bound classes live in `_async/`, and
+unasync's default `AsyncX` → `SyncX` rename produces the sync ones with no
+replacement-map entry.
 
 **A naming asymmetry, open for review.** The I/O classes follow httpx: the
 sync one is unprefixed (`Collection` / `AsyncCollection`). For items, the
@@ -160,13 +134,11 @@ unprefixed name goes to the data class, and the sync bound class is
 `SyncTask`. A reader who generalises from `Collection` will take `Task` to
 be the sync bound class, and `AsyncTask` also reads like `asyncio.Task`.
 The alternative is `TaskData` for the data class and `Task` / `AsyncTask`
-for the bound ones, at one replacement-map entry per class.
-[§10 Open questions](#10-open-questions), Q10.
+for the bound ones, at one replacement-map entry per class
+([§10 Open questions](#10-open-questions), Q10).
 
-**Mirroring one item to several backends** (the author's suggestion: an item
-that references a list of backends, so that `save()` pushes to all of them)
-is in [§10 Open questions](#10-open-questions), Q9. In short: it is a sync
-engine, and this proposal keeps the door open without building one.
+**Mirroring one item to several backends** is
+[§10 Open questions](#10-open-questions), Q9.
 
 Lifecycle: `Workspace` and `Backend`, which own sessions, are context
 managers (`with` / `async with`) and have `close()`, awaited in async mode.
@@ -200,7 +172,8 @@ class AsyncWorkspace:
     async def collections(self) -> MultiResult[AsyncCollection]: ...
     async def collection(self, name_or_id: str) -> AsyncCollection: ...   # NotFoundError, AmbiguousError
     async def search(self, searcher: Searcher | None = None, **filters: Any) -> MultiResult[AsyncCalendarObject]: ...
-    # MultiResult[T]: dataclass with items: list[T], errors: Mapping[str, CalendaringError], raise_for_errors()
+    # MultiResult[T]: dataclass with items: list[T], errors: Mapping[str, CalendaringError]
+    # (keyed by backend id for collections(), by collection id for search()), raise_for_errors()
     async def close(self) -> None: ...
 ```
 
@@ -209,8 +182,8 @@ a workspace.
 
 **Fan-out returns partial results.** `Workspace.collections` asks every
 backend, and `Workspace.search` every collection, and both return a
-`MultiResult` (a generic dataclass): `.items`, `.errors: Mapping[collection_id,
-CalendaringError]`, and `.raise_for_errors()`, which raises an
+`MultiResult` (a generic dataclass): `.items`, `.errors` (keyed by backend
+or collection id), and `.raise_for_errors()`, which raises an
 `ExceptionGroup` (new in Python 3.11, which is the supported minimum: [D4](PRIOR_ART_AND_DECISIONS.md#d4-python-version-floor)) if any collection failed. One unreachable server
 must not blank a calendar application's agenda, which is what a plain raise
 would do; but the failure must not be silent either, and the caller decides
@@ -279,8 +252,11 @@ class AsyncCollection:
 
     # writing
     async def add(self, item: CalendarObject, *, loss: LossPolicy | None = None) -> AsyncCalendarObject: ...
+    async def add_task(self, **properties: Any) -> AsyncTask: ...      # add(Task.new(**properties))
+    async def add_event(self, **properties: Any) -> AsyncEvent: ...
+    async def add_journal(self, **properties: Any) -> AsyncJournal: ...
     async def save(self, item: CalendarObject, *, overwrite: bool = False, scope: Scope = Scope.THIS,
-                   loss: LossPolicy | None = None) -> AsyncCalendarObject: ...   # scope: occurrences only, §3.7
+                   loss: LossPolicy | None = None) -> AsyncCalendarObject: ...   # scope: occurrences only, see "Recurrence"
     async def delete(self, item: CalendarObject | str, *, overwrite: bool = False) -> None: ...
     async def complete(self, task: Task, at: datetime | None = None,
                        mode: Literal["safe", "this_and_future"] = "safe") -> AsyncTask: ...
@@ -345,7 +321,7 @@ between the two leaves the item in both places, never in neither.
 
 **How it fits Gitea:** a repository is a collection with `components =
 {TASK}`; `events()` returns an empty list rather than raising (there are
-none), `add(Event(...))` raises `UnsupportedError(Feature.COMPONENT_EVENT)`.
+none), `add_event(...)` raises `UnsupportedError(Feature.COMPONENT_EVENT)`.
 
 ---
 
@@ -421,9 +397,12 @@ Rules for bound items:
 - `relatives()` returns each relative bound to the collection it was found
   in. `collection.move()` returns the item bound to the target.
 
-Constructors: `Task.new(summary=..., due=..., **properties)`, and
-`Task.from_ical(data)`, `Task(icalendar_instance)`. The `uid` defaults to a
-fresh UUID, as `icalendar.Todo.new` does.
+Factories, which library users call instead of constructors:
+`Task.new(summary=..., due=..., **properties)`, `Task.from_ical(data)` (a
+string or bytes) and `Task.from_icalendar(calendar)` (an
+`icalendar.Calendar` already parsed). The `uid` defaults to a fresh UUID,
+as `icalendar.Todo.new` does. Bound items come only from a collection
+([§1.1 Sync and async](#11-sync-and-async)).
 
 ### 3.2 Identity
 
@@ -613,14 +592,15 @@ for it ([prior art §1.3, `ical`](PRIOR_ART_AND_DECISIONS.md#13-ical-allen-porte
 and by [D1](PRIOR_ART_AND_DECISIONS.md#d1-packaging-principle) it may belong in the recurring-ical-events package ([§10 Open questions](#10-open-questions), Q3, and [issue 292](https://github.com/niccokunzmann/python-recurring-ical-events/issues/292)). `save(occurrence, scope=Scope.THIS_AND_FUTURE)` raises
 `UnsupportedError(Feature.RECURRENCE_EDIT_THIS_AND_FUTURE)` until it supports it.
 
-**Completing one occurrence of a recurring task** is `complete(task,
-mode=...)` with caldav's two modes, `safe` and `this_and_future`. (caldav
+**Completing one occurrence of a recurring task** is `task.complete(mode=...)`
+([§2.3 Collection](#23-collection)), with caldav's two modes, `safe` and
+`this_and_future`. (caldav
 declares `"this_and_future"` but only accepts `"thisandfuture"`: it looks
 up `_complete_recurring_<mode>`, and that method is spelled
 `_complete_recurring_thisandfuture`. The CalDAV backend passes the working
 spelling, and the mismatch is reported as
 [caldav issue 735](https://github.com/python-caldav/caldav/issues/735).)
-([§2.3 Collection](#23-collection)). Where that code should live is
+Where that code should live is
 [§10 Open questions](#10-open-questions), Q3.
 
 [§9 Migrating from caldav](#9-migrating-from-caldav) compares the whole of
@@ -872,7 +852,7 @@ Adopts vdirsyncer's contract ([prior art §1.2, vdirsyncer](PRIOR_ART_AND_DECISI
 @dataclass(frozen=True)
 class ChangeSet(Generic[T]):            # outside _async/; T is the bound item class of the mode
     changed: list[T]                    # new or modified since token, bound to the collection
-    deleted: list[str]                  # uids
+    deleted: list[str]                  # native ids (CalDAV: hrefs); a removal report names no UID
     token: SyncToken                    # SyncToken = NewType("SyncToken", str); opaque, persist it and pass it back
 
 cs = await cal.changes()                # everything, plus a token
@@ -881,12 +861,17 @@ cs = await cal.changes(cs.token)        # what changed since
 
 - CalDAV: RFC 6578 sync-token where the server supports it (`FULL`),
   otherwise emulated by caldav from an ETag listing.
-- Files: the token is a compact encoding of `{uid: etag}`; changes are a
+- Files: the token is a compact encoding of `{native_id: etag}`; changes are a
   re-scan diffed against it (`EMULATED`).
 - Feed: HTTP `ETag`/`Last-Modified` short-circuits "nothing changed";
   otherwise a diff of item hashes, as for files.
 - Gitea: `since=` on the issues API finds changed items; finding *deleted*
   ones needs a listing of all ids, so `EMULATED`.
+
+Removals are reported by `native_id`, not `uid`: an RFC 6578 report names
+only the href of a removed member, and a server can hold several objects
+with one UID (calendaring-sync's design reached the same conclusion; see
+[§10 Open questions](#10-open-questions), Q11).
 
 A token is valid only for the collection that issued it. A token the
 backend can no longer honour (CalDAV `valid-sync-token` precondition, a
@@ -945,7 +930,7 @@ caldav's public API as of 2026-10-08 (caldav 3.4.0).
 | `search(…, server_expand=True)` | not a caller choice; the backend decides, the result is the same | escape hatch |
 | `get_object_by_uid()`, `event_by_uid()`, `todo_by_uid()` | `get(uid)` | same |
 | `event_by_url()` | `get_by_native_id(href)` | same |
-| `add_todo(summary=…)`, `save_todo(…)` | `add(Task.new(summary=…))` | changed: two steps |
+| `add_todo(summary=…)`, `save_todo(…)` | `add_task(summary=…)` | same for properties; `ical=` → `add(Task.from_ical(…))` |
 | `obj.save()`, `no_overwrite`, `no_create` | `obj.save()` on a bound item, `collection.add(obj)` for a new one | same for updates; create and update split |
 | ETag / Schedule-Tag preconditions on save | `etag` precondition, `ConflictError` | same; Schedule-Tag only through the escape hatch |
 | `obj.load()`, `obj.delete()` | `obj.reload()`, `obj.delete()` | same (in place on a bound item) |
@@ -1011,13 +996,9 @@ since calendaring depends on caldav.
 For the author and for peer review. Each has a proposed answer; none blocks
 [roadmap 1.2](ROADMAP.md#12-abstract-base-classes-and-the-backend-conformance-suite) from starting.
 
-1. **Items and I/O (A1).** The first draft had data-only items. *Author,
-   2026-10-09: "I don't like it — but this is probably a necessary cost of
-   getting the async/sync schism right."* His review on 2026-10-10 showed
-   that most of its arguments do not survive unasync. The proposal is now
-   data classes plus bound subclasses per mode
-   ([§1.1 Sync and async](#11-sync-and-async)), which keeps caldav's
-   `task.save()`. Awaiting the author's confirmation.
+1. *Decided, 2026-10-10:* **Items and I/O (A1).** Mode-free data classes
+   plus bound subclasses per mode, which keeps caldav's `task.save()`
+   ([§1.1 Sync and async](#11-sync-and-async)).
 2. *Decided, 2026-10-09: `Workspace`.* **The name `Client`.** The author disliked it ("could mean anything")
    and suggested `CalendaringConfig`, `CalendaringCollection` and
    `Calendaring`. What the object is: a set of backends, usually loaded from
@@ -1081,14 +1062,41 @@ For the author and for peer review. Each has a proposed answer; none blocks
 
    **Proposal:** not in 1.x items. Binding to one collection does not rule
    it out: a later `Mirror` that holds several bound copies and fans
-   `save()` out can be added without breaking anything. The organisation
-   already has an empty `calendaring-sync` repository, which is the natural
-   home for the conflict half.
+   `save()` out can be added without breaking anything. The conflict half
+   belongs in [calendaring-sync](https://github.com/pycalendar/calendaring-sync),
+   which is being designed now (Q11).
 10. **Item class names** ([§1.1 Sync and async](#11-sync-and-async)):
     `Task` (data) / `SyncTask` / `AsyncTask` as proposed, or `TaskData` /
     `Task` / `AsyncTask` to match the I/O classes' httpx pattern? A
     question for peer review; the proposal keeps the short name for the
     class most code touches.
+11. **Cooperation with calendaring-sync.**
+    calendaring-sync (Sashank, same 2026-11-01 deadline) keeps sync state
+    and detects conflicts; protocol adapters feed it. Its design
+    ([PR 19](https://github.com/pycalendar/calendaring-sync/pull/19))
+    overlaps with [§7 Change detection](#7-change-detection) and with
+    roadmap 2.1. Neither project can wait for the other, so the proposal is
+    to share findings and keep the interfaces compatible:
+    - **caldav fixes both need.** The sync adapter works around caldav
+      dropping a truncated `sync-collection` page (RFC 6578 §3.6), losing a
+      403's body (so `valid-sync-token` cannot be told from a permission
+      error), `save()` bumping `SEQUENCE` unasked, and `delete()` sending no
+      precondition. Our CalDAV backend hits the same four. They belong in
+      caldav, as issues filed now.
+    - **One "calendaring" adapter later.** Our `Collection.changes()`,
+      etags and conditional writes cover CalDAV, JMAP, files, feeds and
+      Gitea. An adapter in calendaring-sync built on them would give it
+      every calendaring backend at once, so its adapter interface should
+      stay public and protocol-neutral.
+    - **Adopt their change-set findings here.** Removal by native id is
+      done (above). Still open: whether our `ChangeSet` should also say
+      "full listing or incremental" and "complete or truncated page", as
+      theirs does, and whether a write's returned etag can be trusted
+      (they found servers that rewrite stored data and still return one).
+    - **Licence.** calendaring-sync is AGPL. An adapter living there may
+      depend on calendaring; calendaring depending on calendaring-sync
+      (for a `Mirror`) would have to be an optional extra, like JMAP
+      ([D3](PRIOR_ART_AND_DECISIONS.md#d3-licence)).
 
 ---
 
