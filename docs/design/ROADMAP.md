@@ -177,7 +177,9 @@ prototyping.
 **Tasks:**
 - [x] **Settle the name.** `calendaring`, the same on GitHub, PyPI and as the
       import name (D2). It does not signal task support by itself; the
-      tagline carries that. Free on PyPI as of 2026-10-05.
+      tagline carries that. Free on PyPI as of 2026-10-05. (this decision may need
+	  reversal, the rest of the team thinks it's not intuitive what a "calendaring"-
+	  package is doing)
 - [x] **Write up the packaging principle.** (D1) Two questions a reviewer will ask are
       already decided, and both follow from one principle: logic unrelated to the
       CalDAV protocol does not belong in the `caldav` library.
@@ -209,26 +211,27 @@ prototyping.
 - **Priority:** Critical
 - **Estimated effort:** 20 hours
 - **Dependencies:** 0.1, 0.2, 0.3
-- **Deliverable:** a documented API specification, peer-reviewed
+- **Deliverable:** a documented API specification, peer-reviewed —
+  [API_DESIGN.md](API_DESIGN.md) (drafted 2026-10-08, reviewed by the author; peer review not started)
 
 The API should feel familiar to caldav users without being a CalDAV API in
 disguise. The test of the design is not "does it fit CalDAV" but "does it fit
 CalDAV *and* a Gitea issue tracker without lying about either".
 
 **Tasks:**
-- [ ] Define the object model: client, account, collection, calendar object,
+- [x] Define the object model: workspace, backend, collection, calendar object,
       task, event, journal
-- [ ] Define the search/filter interface, reusing `icalendar-searcher` so that
+- [x] Define the search/filter interface, reusing `icalendar-searcher` so that
       client-side and server-side filtering behave identically
-- [ ] Define the capability-declaration mechanism: how a caller asks a backend
+- [x] Define the capability-declaration mechanism: how a caller asks a backend
       what it can do, and what happens when it asks for something unsupported
       (raise, degrade, or emulate client-side — and how the caller chooses)
-- [ ] Define error taxonomy and the exception hierarchy
-- [ ] Define change detection across backends with no ETag (mtime, revision
+- [x] Define error taxonomy and the exception hierarchy
+- [x] Define change detection across backends with no ETag (mtime, revision
       counters, or nothing)
-- [ ] Define the escape hatch: how a caller reaches backend-specific functionality
+- [x] Define the escape hatch: how a caller reaches backend-specific functionality
       without the abstraction pretending it does not exist
-- [ ] Incorporate the task model from 0.1; fields with no standard property
+- [x] Incorporate the task model from 0.1; fields with no standard property
       are stored as `X-` properties (0.3, D6)
 - [ ] Peer review, and revise. Identify and approach reviewers early — a review
       is a dependency on someone else's calendar, not a quantity of work.
@@ -307,6 +310,8 @@ therefore has a committed downstream consumer and should not be trimmed.
 - [ ] Config file discovery (XDG paths, explicit path, environment)
 - [ ] Credential handling: keyring integration, and never requiring secrets in
       plaintext config
+- [ ] Settle the shared file with the caldav and calendaring-jmap
+      maintainers: see [CONFIGURATION_PROPOSAL.md](CONFIGURATION_PROPOSAL.md)
 - [ ] Check existing conventions first — `caldav`, `plann`, `vdirsyncer`, `khal`, etc — rather
       than inventing a fifth format (probably build on the caldav format)
 - [ ] Document the format
@@ -489,6 +494,8 @@ express this backend without contortion, the finding is more valuable than the c
 
 **Tasks:**
 - [ ] Implement the tracker recommended by 0.1
+- [ ] Run Gitea as a CI service container (official image, SQLite) for the
+      conformance suite; a permanent instance is optional, for dogfooding
 - [ ] Auth, pagination and rate limiting for that tracker's API
 - [ ] Map its task model to the library's, and record every lossy mapping
 - [ ] Pass the conformance suite, with unsupported operations failing as specified
