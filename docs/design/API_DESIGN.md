@@ -671,13 +671,16 @@ one series in the search window are several items with the same `uid`
 ([What an item contains](#what-an-item-contains)).
 
 **Editing one occurrence works as it does in caldav.** `save(occurrence)`
-fetches the master, inserts or replaces the override component for that
-`RECURRENCE-ID`, bumps `SEQUENCE` and saves the whole object. That is what
+fetches the stored object, inserts or replaces the override component for
+that `RECURRENCE-ID`, bumps `SEQUENCE` and saves the whole object. When the
+stored object has no master (overrides only), the override is replaced in
+place. That is what
 caldav's `save(only_this_recurrence=True)`, its default, does, and what the
 recurring-ical-events user guide shows ("Edit one event of an existing
 series"). `save(occurrence, scope=Scope.ALL)` (`class Scope(Enum)` with
 `THIS`, `ALL` and `THIS_AND_FUTURE`; default `THIS`) applies the change to the
-master instead, which is caldav's `all_recurrences=True`. The merge is
+master instead, which is caldav's `all_recurrences=True`; with no master
+stored there is nothing to apply it to, and it raises. The merge is
 `icalendar` manipulation with no I/O, so it works the same on every backend
 that stores `RRULE` (`recurrence` capability). Backends that do not
 (Gitea) never produce occurrences.
@@ -1212,9 +1215,10 @@ For the author and for peer review. Each has a proposed answer; none blocks
     ([What an item contains](#what-an-item-contains)). Occurrences of one
     stored series share its `native_id` and `etag`, so the rules for a whole
     object do not carry over:
-    - **`delete(occurrence)`** must not delete the stored series, which is
-      what caldav does today (caldav
-      [#398](https://github.com/python-caldav/caldav/issues/398)).
+    - **`delete(occurrence)`** must not delete the stored series, which
+      caldav may do today: caldav
+      [#398](https://github.com/python-caldav/caldav/issues/398) suspects
+      it, and nobody has tested it.
       **Proposal:** remove that occurrence's override, if there is one, and
       add an `EXDATE` to the master. When there is no master, remove the
       override, and delete the stored object only when it was the last one.
@@ -1225,8 +1229,11 @@ For the author and for peer review. Each has a proposed answer; none blocks
       required the etag it was read with, it would raise `ConflictError`
       for an edit nobody made to it. **Proposal:** `save(occurrence)`
       already fetches the stored object to merge into, so it raises only if
-      *that occurrence* changed since it was read (its override's
-      `SEQUENCE` or `LAST-MODIFIED`), and writes with the fresh etag.
+      *that occurrence* changed since it was read, and writes with the
+      fresh etag. For an overridden occurrence the check is the override's
+      `SEQUENCE` or `LAST-MODIFIED`. A generated occurrence has no override,
+      and a concurrent edit of the master (its `RRULE`, its `DTSTART`)
+      changes it too, so there the check is the master's.
 
 ---
 
