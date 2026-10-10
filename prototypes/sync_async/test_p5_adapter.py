@@ -102,6 +102,18 @@ def test_nested_borrow_notifies_once(store: Store) -> None:
     assert puts(store) == 1
 
 
+def test_a_borrow_that_raises_writes_nothing(store: Store) -> None:
+    """A failed modification must not be written half-done under Autosync."""
+    coll = p5_sync.SyncCollection(SyncTransport(store))
+    task = coll.get_task("task-1")
+    task._strategy = p5.Autosync(coll)
+    with pytest.raises(ValueError):
+        with task._borrowed() as data:
+            data.summary = "half"
+            raise ValueError("the rest of the edit failed")
+    assert puts(store) == 0
+
+
 def test_autosync_writes_once_per_modification(store: Store) -> None:
     """Mode 1 of the review.  Three setters, three round trips."""
     coll = p5_sync.SyncCollection(SyncTransport(store))
@@ -192,7 +204,11 @@ def test_type_checker_sees_the_mode() -> None:
         capture_output=True, text=True, cwd=HERE,
         env={**__import__("os").environ, "MYPYPATH": str(HERE)},
     )
-    flagged = {int(ln.split(":")[1]) for ln in out.stdout.splitlines() if ": error:" in ln}
+    flagged = {
+        int(ln.split(":")[1])
+        for ln in out.stdout.splitlines()
+        if ": error:" in ln and ln.split(":")[0].endswith("probe_p5_adapter.py")
+    }
     cases = _cases(probe)
     expected_misses = {"8"}
     for name, (line, wrong) in cases.items():

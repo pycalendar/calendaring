@@ -100,7 +100,9 @@ class TaskAdapter(Generic[M]):
     def _borrowed(self) -> Iterator[Task]:
         """Lend out the data for writing; mark dirty and notify on the way back.
 
-        Nested borrows notify once, when the outermost one returns.
+        Nested borrows notify once, when the outermost one returns.  A borrow
+        that raises still marks the item dirty (the data may have changed)
+        but notifies nobody, so Autosync never writes a half-done edit.
         """
         outer = not getattr(self, "_borrow_depth", 0)
         self._borrow_depth = getattr(self, "_borrow_depth", 0) + 1
@@ -109,8 +111,8 @@ class TaskAdapter(Generic[M]):
         finally:
             self._borrow_depth -= 1
             self.dirty = True
-            if outer:
-                self._strategy.notify(self)
+        if outer:
+            self._strategy.notify(self)
 
     def as_data(self) -> Task:
         """A plain copy, for pickling or handing to the other mode."""

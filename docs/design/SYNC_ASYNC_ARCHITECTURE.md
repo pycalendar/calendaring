@@ -50,7 +50,7 @@ both ([§10](#10-p2b-and-p4-compared) shows them side by side).
 
 ## 1. Method
 
-Everything measured below has been prototyped and tested; five architectures are implemented against the *same* toy backend and driven by the *same* test suite:
+Everything measured below has been prototyped and tested; four architectures are implemented against the *same* toy backend and driven by the *same* test suite, plus one API layer on top of the fourth (p5, [§12](#12-revisited-the-adapter-pattern-2026-10-10)):
 
 | File | What it is |
 |---|---|
@@ -73,7 +73,7 @@ Everything measured below has been prototyped and tested; five architectures are
 Reproduce from the repository root with `uv run --python 3.14 --with unasync
 --with pytest --with pytest-asyncio --with greenlet --with mypy python -m pytest
 prototypes/sync_async/ -q`, and the same for `measure.py` (add pyright to the
-path for its column in [§5](#5-result-correctness-under-composition)). Current result: **140 passed, 1 xfailed**. Without
+path for its column in [§5](#5-result-correctness-under-composition)). Current result: **141 passed, 1 xfailed**. Without
 `unasync` or `mypy` the tests that need them skip, unless `CI` is set, in which
 case they fail — a CI job that lacks a tool must not go green. Every fenced
 output block below is printed by `measure.py`, on Python 3.14; two are
@@ -86,8 +86,9 @@ and the rest of the document refers to them by these short names:
   run time whether the transport is async (caldav 3.x), kept as the control.
 - <a id="p2"></a>**p2**, generator Sans-I/O: each I/O method is written once
   as a generator that yields requests, driven by a sync or an async driver.
-- <a id="p2b"></a>**p2b**, Sans-I/O with typed façades: p2's core plus a
-  hand-written sync and async façade class carrying the real signatures ([§6](#6-result-type-checking-and-a-finding-that-changes-the-shape-of-the-answer)).
+- <a id="p2b"></a>**p2b**, Sans-I/O with typed façades: p2's drivers and guard,
+  with a core of its own and a hand-written sync and async façade class
+  carrying the real signatures ([§6](#6-result-type-checking-and-a-finding-that-changes-the-shape-of-the-answer)).
 - <a id="p3"></a>**p3**, greenlet bridging: a sync core run inside a greenlet
   that suspends on the async transport, as SQLAlchemy does ([§8](#8-greenlet-not-competitive)).
 - <a id="p4"></a>**p4**, async-first with unasync: the async code is the
@@ -797,12 +798,14 @@ item.save()                 # bare: the item's strategy decides
                             #   Gather            queues; gather.flush() / await gather.flush()
 ```
 
-Results (`test_conformance.py`, `test_p5_adapter.py`, 140 passed):
+Results (`test_conformance.py`, `test_p5_adapter.py`, 141 passed):
 
 - **The shared suite** passes in both modes.
 - **Duplication** is the same as p4: one hand-written copy of every I/O method.
-  The adapter and strategies are mode-free and hand-written once, apart from a
-  sync-only `Autosync`.
+  The adapter and the `Immediate` strategy are mode-free and hand-written
+  once. `Gather` does I/O in `flush()`, so it lives in `_async/ops.py` and
+  is generated per mode. `Autosync` is hand-written once and works in sync
+  mode only.
 - **The composition slip.** If an async op calls the item's bare `save()`,
   it raises `ModeError`, which is better than p4. If it calls the facade's
   `self.save()` without `await`, that is p4's slip unchanged, with p4's
@@ -812,7 +815,8 @@ Results (`test_conformance.py`, `test_p5_adapter.py`, 140 passed):
   methods carry a self-type. mypy and pyright both accept the correct uses
   and both reject the wrong facade, the bare call in async mode and the
   missing `await` ([`probe_p5_adapter.py`](../../prototypes/sync_async/typing_probe/probe_p5_adapter.py),
-  pinned by `test_type_checker_sees_the_mode`). **This corrects [§6](#6-result-type-checking-and-a-finding-that-changes-the-shape-of-the-answer)**:
+  pinned for mypy by `test_type_checker_sees_the_mode`; pyright checked by
+  hand). **This corrects [§6](#6-result-type-checking-and-a-finding-that-changes-the-shape-of-the-answer)**:
   "a type checker can only key on the class" holds only for an unparameterised
   class. The limit is that a helper annotated `TaskAdapter[Any]` turns the
   check off, while `TaskAdapter[object]` keeps it. The runtime `ModeError`
@@ -838,9 +842,9 @@ Results (`test_conformance.py`, `test_p5_adapter.py`, 140 passed):
 ### 12.3 What this changes
 
 - **The decision stands.** The adapter pattern answers a different
-  question (the shape of the public API), and [p5, adapter with per-mode façades](#p5) runs on [p4, async-first with unasync](#p4) unmodified.
-  For [1.3](ROADMAP.md#13-syncasync-scaffolding) the only change is that the generator handles more than one
-  package, which it now does.
+  question (the shape of the public API), and [p5, adapter with per-mode façades](#p5) runs on [p4, async-first with unasync](#p4)'s generator, extended only to take
+  a source root (`src_root`). For [1.3](ROADMAP.md#13-syncasync-scaffolding) that is the only change: the generator
+  handles more than one package.
 - **A1 ([1.1](ROADMAP.md#11-unified-api-design-and-peer-review)).** Bound subclasses and an adapter with facades come out
   equal on duplication, on static safety (apart from the `Any` hole) and
   on caldav compatibility in sync mode. The differences:

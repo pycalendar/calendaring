@@ -8,7 +8,7 @@ library code** — 1.3 implements the chosen design properly.
 
 From the repository root:
 
-    python -m pytest prototypes/sync_async/ -q              # 140 passed, 1 xfailed (all tools)
+    python -m pytest prototypes/sync_async/ -q              # 141 passed, 1 xfailed (all tools)
     python prototypes/sync_async/p4_codegen/generate.py     # regenerate p4's _sync/ copy
     python prototypes/sync_async/p5_adapter/generate.py     # regenerate p5's _sync/ copy
     python prototypes/sync_async/measure.py                 # every number and output block
